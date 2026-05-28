@@ -1,4 +1,4 @@
-const CACHE_NAME = "book-stock-pwa-v4";
+const CACHE_NAME = "book-stock-pwa-v5";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -29,6 +29,11 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  if (event.request.url.includes("/merged-stock.csv")) {
+    event.respondWith(fetch(event.request, { cache: "no-store" }));
+    return;
+  }
+
   if (event.request.mode === "navigate" || event.request.destination === "document") {
     event.respondWith(
       fetch(event.request)

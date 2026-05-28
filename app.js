@@ -8,6 +8,8 @@ const state = {
   html5Scanner: null,
 };
 
+const HOSTED_STOCK_FILE = "./merged-stock.csv";
+
 const els = {
   masterFile: document.querySelector("#masterFile"),
   stockFile: document.querySelector("#stockFile"),
@@ -157,6 +159,19 @@ function readCsvFile(file) {
     reader.onerror = () => reject(reader.error);
     reader.readAsText(file, "EUC-KR");
   });
+}
+
+async function readHostedCsv(url) {
+  const response = await fetch(`${url}?v=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const buffer = await response.arrayBuffer();
+  const utf8Text = new TextDecoder("utf-8").decode(buffer);
+  if (utf8Text.includes("�")) {
+    return toObjects(parseCsv(new TextDecoder("euc-kr").decode(buffer)));
+  }
+  return toObjects(parseCsv(utf8Text));
 }
 
 function mergeRows(masterRows, stockRows) {
@@ -466,9 +481,9 @@ els.mergeButton.addEventListener("click", async () => {
     }
 
     state.mergedRows = mergeRows(state.masterRows, state.stockRows);
-    downloadCsv(`통합재고_${todayStamp()}.csv`, state.mergedRows);
+    downloadCsv("merged-stock.csv", state.mergedRows);
     renderDashboard();
-    els.mergeStatus.textContent = `통합 완료: ${state.mergedRows.length.toLocaleString("ko-KR")}권. 중지 ${state.stoppedCount.toLocaleString("ko-KR")}권은 제외했습니다.`;
+    els.mergeStatus.textContent = `통합 완료: ${state.mergedRows.length.toLocaleString("ko-KR")}권. 중지 ${state.stoppedCount.toLocaleString("ko-KR")}권은 제외했습니다. 내려받은 merged-stock.csv를 GitHub 저장소 맨 위에 올리면 모든 기기에서 자동으로 읽습니다.`;
   } catch (error) {
     console.error(error);
     els.mergeStatus.textContent = "통합 중 오류가 났습니다. CSV 파일 형식을 확인해주세요.";
@@ -486,6 +501,18 @@ els.loadMergedButton.addEventListener("click", async () => {
   renderDashboard();
   els.mergeStatus.textContent = `통합재고 ${state.mergedRows.length.toLocaleString("ko-KR")}권을 불러왔습니다.`;
 });
+
+async function loadHostedStock() {
+  try {
+    const rows = await readHostedCsv(HOSTED_STOCK_FILE);
+    state.mergedRows = rows.filter((row) => !isStopped(row["거래상태"]));
+    state.stoppedCount = rows.length - state.mergedRows.length;
+    renderDashboard();
+    els.mergeStatus.textContent = `공유 통합재고 ${state.mergedRows.length.toLocaleString("ko-KR")}권을 자동으로 불러왔습니다.`;
+  } catch (error) {
+    els.mergeStatus.textContent = "공유 통합재고가 아직 없습니다. 이 PC에서 통합재고를 만든 뒤 merged-stock.csv를 GitHub 저장소에 올려주세요.";
+  }
+}
 
 els.findButton.addEventListener("click", () => findAndSpeak(els.isbnInput.value));
 els.speakButton.addEventListener("click", () => speak(resultText(lookup(els.isbnInput.value))));
@@ -535,3 +562,5 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     });
   });
 }
+
+window.addEventListener("load", loadHostedStock);
