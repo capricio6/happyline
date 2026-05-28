@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#176b87">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="도서 재고 위치">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <title>ISBN 재고 위치 조회</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="assets/icon-180.png">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>ISBN 재고 위치 조회</h1>
+          <p class="subtitle">도서명 기준 통합재고 생성, ISBN 조회, 0재고와 위험재고 확인</p>
+        </div>
+        <div class="header-actions">
+          <button id="installButton" class="secondary install-button" type="button" hidden>앱 설치</button>
+          <p class="small">비고 컬럼은 사용하지 않습니다.</p>
+        </div>
+      </header>
+
+      <section class="grid">
+        <div class="panel wide">
+          <h2>1. 통합재고 파일 만들기</h2>
+          <div class="field-grid">
+            <label>
+              도서관리 CSV
+              <input id="masterFile" type="file" accept=".csv,text/csv">
+            </label>
+            <label>
+              재고현황 CSV
+              <input id="stockFile" type="file" accept=".csv,text/csv">
+            </label>
+            <label>
+              통합재고 CSV 불러오기
+              <input id="mergedFile" type="file" accept=".csv,text/csv">
+            </label>
+          </div>
+          <div class="actions">
+            <button id="mergeButton" type="button">통합재고 만들기</button>
+            <button id="loadMergedButton" class="secondary" type="button">통합재고 불러오기</button>
+            <label class="threshold-field">
+              위험재고 기준
+              <input id="riskThreshold" type="number" min="1" step="1" value="50">
+            </label>
+          </div>
+          <p id="mergeStatus" class="status">매일 재고현황을 올리고, 신간 입출고가 있을 때만 도서관리를 다시 올리면 됩니다. 중지 도서는 통합재고에서 제외합니다.</p>
+
+          <div class="kpis" aria-label="요약">
+            <div class="kpi"><span>전체 도서</span><strong id="totalCount">0</strong></div>
+            <div class="kpi"><span>위험재고</span><strong id="riskCount">0</strong></div>
+            <div class="kpi"><span>0재고</span><strong id="zeroCount">0</strong></div>
+            <div class="kpi"><span>위치 없음</span><strong id="noLocationCount">0</strong></div>
+            <div class="kpi"><span>재고 미매칭</span><strong id="noStockCount">0</strong></div>
+            <div class="kpi"><span>중지 제외</span><strong id="stoppedCount">0</strong></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>2. ISBN 조회</h2>
+          <label>
+            ISBN 직접입력 또는 스캐너 입력
+            <input id="isbnInput" type="text" inputmode="numeric" autocomplete="off" placeholder="예: 9791188574223">
+          </label>
+          <div class="actions">
+            <button id="findButton" type="button">조회하고 말하기</button>
+            <button id="speakButton" class="secondary" type="button">다시 듣기</button>
+            <button id="startCameraButton" class="secondary" type="button">휴대폰 카메라 스캔</button>
+            <button id="stopCameraButton" class="danger" type="button" disabled>카메라 끄기</button>
+          </div>
+          <div id="cameraBox" class="camera-box">
+            <video id="video" autoplay muted playsinline></video>
+            <div id="html5Reader"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>조회 결과</h2>
+          <div id="answer" class="answer">
+            <strong>통합재고를 먼저 준비해주세요.</strong>
+            <p>통합재고를 만들거나 불러온 뒤 ISBN을 입력하면 위치와 재고를 음성으로 안내합니다.</p>
+          </div>
+        </div>
+
+        <div class="panel wide">
+          <h2>3. 재고 관리 목록</h2>
+          <div class="actions">
+            <button id="downloadRiskButton" class="secondary" type="button" disabled>위험재고 CSV 내려받기</button>
+            <button id="downloadZeroButton" class="secondary" type="button" disabled>0재고 CSV 내려받기</button>
+          </div>
+
+          <h3>위험재고</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ISBN</th>
+                  <th>도서명</th>
+                  <th>출판사</th>
+                  <th>창고재고</th>
+                  <th>위치코드</th>
+                  <th>위치설명</th>
+                </tr>
+              </thead>
+              <tbody id="riskBody"></tbody>
+            </table>
+          </div>
+
+          <h3 class="subtable-title">0재고</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ISBN</th>
+                  <th>도서명</th>
+                  <th>출판사</th>
+                  <th>창고재고</th>
+                  <th>위치코드</th>
+                  <th>위치설명</th>
+                </tr>
+              </thead>
+              <tbody id="zeroBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

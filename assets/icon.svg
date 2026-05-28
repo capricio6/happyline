@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="도서 재고 위치 아이콘">
+  <defs>
+    <linearGradient id="bg" x1="72" y1="40" x2="448" y2="472" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1f8aa8"/>
+      <stop offset="0.55" stop-color="#176b87"/>
+      <stop offset="1" stop-color="#0f3f56"/>
+    </linearGradient>
+    <linearGradient id="page" x1="126" y1="106" x2="352" y2="386" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dceaf0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M136 132c0-22 18-40 40-40h190c17 0 30 13 30 30v250c0 17-13 30-30 30H176c-22 0-40-18-40-40V132Z" fill="#0b3448" opacity=".26"/>
+  <path d="M118 128c0-24 19-43 43-43h211c12 0 22 10 22 22v260c0 12-10 22-22 22H161c-24 0-43-19-43-43V128Z" fill="url(#page)"/>
+  <path d="M162 86h210c12 0 22 10 22 22v238H162c-20 0-36 16-36 36V122c0-20 16-36 36-36Z" fill="#f8fbfc"/>
+  <path d="M170 126h172M170 166h172M170 206h118" stroke="#9ab4c0" stroke-width="18" stroke-linecap="round"/>
+  <path d="M150 382h222" stroke="#b5cbd4" stroke-width="26" stroke-linecap="round"/>
+  <path d="M344 300a72 72 0 1 1-144 0 72 72 0 0 1 144 0Z" fill="#f5b84b"/>
+  <path d="M272 242c-32 0-58 26-58 58 0 43 58 94 58 94s58-51 58-94c0-32-26-58-58-58Zm0 84a27 27 0 1 1 0-54 27 27 0 0 1 0 54Z" fill="#12384a"/>
+  <path d="M272 326a27 27 0 1 0 0-54 27 27 0 0 0 0 54Z" fill="#ffffff"/>
+  <path d="M107 112h28v280h-28c-19 0-35-16-35-35V147c0-19 16-35 35-35Z" fill="#f05d4f"/>
+</svg>
