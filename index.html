@@ -71,8 +71,7 @@
             <input id="isbnInput" type="text" inputmode="numeric" autocomplete="off" placeholder="예: 9791188574223">
           </label>
           <div class="actions">
-            <button id="findButton" type="button">조회하고 말하기</button>
-            <button id="speakButton" class="secondary" type="button">다시 듣기</button>
+            <button id="findButton" type="button">조회</button>
             <button id="startCameraButton" class="secondary" type="button">휴대폰 카메라 스캔</button>
             <button id="stopCameraButton" class="danger" type="button" disabled>카메라 끄기</button>
           </div>
@@ -95,13 +94,20 @@
           <div class="actions">
             <button id="downloadRiskButton" class="secondary" type="button" disabled>위험재고 CSV 내려받기</button>
             <button id="downloadZeroButton" class="secondary" type="button" disabled>0재고 CSV 내려받기</button>
+            <button id="showAllRiskButton" class="secondary" type="button">위험재고 전체 보기</button>
+            <label class="inline-check">
+              <input id="selectedRiskOnly" type="checkbox">
+              선택한 위험재고만 보기
+            </label>
           </div>
 
           <h3>위험재고</h3>
+          <p class="small table-note">관리할 도서만 체크해두면 다음 접속 때 체크한 위험재고만 먼저 보여줍니다.</p>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th>관리</th>
                   <th>ISBN</th>
                   <th>도서명</th>
                   <th>출판사</th>

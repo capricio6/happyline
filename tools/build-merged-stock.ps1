@@ -30,7 +30,7 @@ function Get-Location($Title) {
     $floor = $Matches[4]
     return @{
       Code = "$building$line$position$floor"
-      Text = "$building동 $line번 라인, 앞에서 $position번째, $floor층"
+      Text = "${building}동 ${line}번 라인, 앞에서 ${position}번째, ${floor}층"
     }
   }
   return @{
