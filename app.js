@@ -1,4 +1,4 @@
-const APP_VERSION = "2.0.5";
+const APP_VERSION = "2.0.6";
 
 const state = {
   masterRows: [],
@@ -435,7 +435,7 @@ async function startCamera() {
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false,
     });
   } catch (error) {
@@ -514,14 +514,11 @@ function startZxingOnVideo() {
     hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
       ZXing.BarcodeFormat.EAN_13,
       ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.CODE_128,
-      ZXing.BarcodeFormat.CODE_39,
       ZXing.BarcodeFormat.UPC_A,
-      ZXing.BarcodeFormat.UPC_E,
     ]);
     hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
   }
-  state.zxingReader = new ZXing.BrowserMultiFormatReader(hints, 300);
+  state.zxingReader = new ZXing.BrowserMultiFormatReader(hints, 200);
 
   const onDecode = (result) => {
     if (!result) return;
