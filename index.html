@@ -19,7 +19,7 @@
       <header>
         <div>
           <h1>ISBN 재고 위치 조회</h1>
-          <p class="subtitle">도서명 기준 통합재고 생성, ISBN 조회, 0재고와 위험재고 확인</p>
+          <p class="subtitle">ISBN 스캔, 위치 조회, 0재고와 위험재고 관리</p>
         </div>
         <div class="header-actions">
           <button id="installButton" class="secondary install-button" type="button" hidden>앱 설치</button>
@@ -28,8 +28,34 @@
       </header>
 
       <section class="grid">
+        <div class="panel">
+          <h2>1. ISBN 조회</h2>
+          <label>
+            ISBN 직접입력 또는 스캐너 입력
+            <input id="isbnInput" type="text" inputmode="numeric" autocomplete="off" placeholder="예: 9791188574223">
+          </label>
+          <div class="actions">
+            <button id="findButton" type="button">조회</button>
+            <button id="startCameraButton" class="secondary" type="button">휴대폰 카메라 스캔</button>
+            <button id="stopCameraButton" class="danger" type="button" disabled>카메라 끄기</button>
+          </div>
+          <p class="small scan-help">아이폰은 반드시 <b>Safari</b> 또는 홈 화면에 추가한 앱에서 열어야 카메라가 동작합니다. (Chrome/Naver/Kakao 인앱 브라우저 불가)</p>
+          <div id="cameraBox" class="camera-box">
+            <video id="video" autoplay muted playsinline></video>
+            <div id="html5Reader"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>조회 결과</h2>
+          <div id="answer" class="answer">
+            <strong>통합재고를 불러오는 중입니다.</strong>
+            <p>불러온 뒤 ISBN을 입력하거나 카메라로 스캔하면 위치와 재고를 보여줍니다.</p>
+          </div>
+        </div>
+
         <div class="panel wide">
-          <h2>1. 통합재고 파일 만들기</h2>
+          <h2>2. 통합재고 파일 관리</h2>
           <div class="field-grid">
             <label>
               도서관리 CSV
@@ -49,10 +75,10 @@
             <button id="loadMergedButton" class="secondary" type="button">통합재고 불러오기</button>
             <label class="threshold-field">
               위험재고 기준
-              <input id="riskThreshold" type="number" min="1" step="1" value="50">
+              <input id="riskThreshold" type="number" min="1" step="1" value="200">
             </label>
           </div>
-          <p id="mergeStatus" class="status">GitHub에 merged-stock.csv가 있으면 모든 기기에서 자동으로 불러옵니다. 새 재고는 이 PC에서 통합 후 같은 이름으로 GitHub에 올리면 됩니다.</p>
+          <p id="mergeStatus" class="status">GitHub에 merged-stock.csv가 있으면 모든 기기에서 자동으로 불러옵니다.</p>
 
           <div class="kpis" aria-label="요약">
             <div class="kpi"><span>전체 도서</span><strong id="totalCount">0</strong></div>
@@ -61,31 +87,6 @@
             <div class="kpi"><span>위치 없음</span><strong id="noLocationCount">0</strong></div>
             <div class="kpi"><span>재고 미매칭</span><strong id="noStockCount">0</strong></div>
             <div class="kpi"><span>중지 제외</span><strong id="stoppedCount">0</strong></div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>2. ISBN 조회</h2>
-          <label>
-            ISBN 직접입력 또는 스캐너 입력
-            <input id="isbnInput" type="text" inputmode="numeric" autocomplete="off" placeholder="예: 9791188574223">
-          </label>
-          <div class="actions">
-            <button id="findButton" type="button">조회</button>
-            <button id="startCameraButton" class="secondary" type="button">휴대폰 카메라 스캔</button>
-            <button id="stopCameraButton" class="danger" type="button" disabled>카메라 끄기</button>
-          </div>
-          <div id="cameraBox" class="camera-box">
-            <video id="video" autoplay muted playsinline></video>
-            <div id="html5Reader"></div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>조회 결과</h2>
-          <div id="answer" class="answer">
-            <strong>통합재고를 먼저 준비해주세요.</strong>
-            <p>통합재고를 만들거나 불러온 뒤 ISBN을 입력하면 위치와 재고를 음성으로 안내합니다.</p>
           </div>
         </div>
 

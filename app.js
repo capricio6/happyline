@@ -6,6 +6,7 @@ const state = {
   barcodeLoop: null,
   mediaStream: null,
   html5Scanner: null,
+  zxingReader: null,
 };
 
 const HOSTED_STOCK_FILE = "./merged-stock.csv";
@@ -171,7 +172,7 @@ function numberValue(value) {
 
 function currentRiskThreshold() {
   const value = Math.floor(numberValue(els.riskThreshold?.value));
-  return value > 0 ? value : 50;
+  return value > 0 ? value : 200;
 }
 
 function isStopped(value) {
@@ -381,16 +382,76 @@ function showResult(row) {
 }
 
 async function startCamera() {
-  if (!("BarcodeDetector" in window)) {
-    await startHtml5Scanner();
-    return;
+  // 1) 카메라 권한 사전 확인 (iOS에서 명확한 에러 메시지 출력)
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    alert("이 브라우저는 카메라를 지원하지 않습니다.\n\n[해결]\n- HTTPS 주소(https://...)인지 확인\n- iPhone: Safari로 열기 (Chrome/Naver/Kakao 인앱 X)\n- Android: 최신 Chrome 사용");
+    throw new Error("getUserMedia unsupported");
   }
 
+  try {
+    // 사전 권한 요청: 실패하면 즉시 명확한 메시지 출력
+    const probeStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false,
+    });
+    // 권한만 확인 후 즉시 종료, 실제 스트림은 라이브러리가 다시 연다
+    probeStream.getTracks().forEach((track) => track.stop());
+  } catch (error) {
+    const msg = error && error.name === "NotAllowedError"
+      ? "카메라 권한이 거부되었습니다.\n\n[iPhone]\n설정 > Safari > 카메라 > '허용' 또는 '확인'\n그 다음 Safari 새로고침\n\n[Android]\n주소창 옆 자물쇠 > 사이트 설정 > 카메라 허용"
+      : `카메라를 열 수 없습니다: ${error?.message || error}\n\nHTTPS 주소인지, 다른 앱이 카메라를 점유 중인지 확인해주세요.`;
+    alert(msg);
+    throw error;
+  }
+
+  // 2) iOS는 html5-qrcode 우선 (ZXing보다 iOS Safari에서 안정적, 재초기화 지원)
+  if (isIOS()) {
+    try {
+      await startHtml5Scanner();
+      return;
+    } catch (error) {
+      console.warn("Html5Qrcode failed on iOS, fallback to ZXing", error);
+    }
+    try {
+      await startZxingScanner();
+      return;
+    } catch (error) {
+      alert(`스캐너 초기화 실패: ${error?.message || error}\n네트워크 상태를 확인하고 다시 시도해주세요.`);
+      throw error;
+    }
+  }
+
+  // 3) Android/PC: BarcodeDetector 네이티브 우선 (가장 빠름)
+  if ("BarcodeDetector" in window) {
+    try {
+      await startNativeBarcodeDetector();
+      return;
+    } catch (error) {
+      console.warn("Native BarcodeDetector failed, fallback to Html5Qrcode", error);
+    }
+  }
+
+  // 4) 최후 fallback
+  try {
+    await startHtml5Scanner();
+  } catch (error) {
+    console.warn("Html5Qrcode failed, fallback to ZXing", error);
+    await startZxingScanner();
+  }
+}
+
+async function startNativeBarcodeDetector() {
   const detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128", "code_39"] });
-  state.mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  state.mediaStream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: "environment" } },
+    audio: false,
+  });
   els.video.style.display = "block";
   els.html5Reader.style.display = "none";
   els.video.srcObject = state.mediaStream;
+  els.video.setAttribute("playsinline", "true");
+  els.video.setAttribute("muted", "true");
+  await els.video.play().catch(() => undefined);
   els.cameraBox.style.display = "block";
   els.startCameraButton.disabled = true;
   els.stopCameraButton.disabled = false;
@@ -411,7 +472,6 @@ async function startCamera() {
     }
     state.barcodeLoop = window.requestAnimationFrame(scan);
   };
-
   state.barcodeLoop = window.requestAnimationFrame(scan);
 }
 
@@ -422,15 +482,32 @@ function stopCamera() {
     state.mediaStream.getTracks().forEach((track) => track.stop());
   }
   state.mediaStream = null;
-  els.video.srcObject = null;
+  if (els.video) {
+    try { els.video.pause(); } catch (e) { /* ignore */ }
+    els.video.srcObject = null;
+  }
   if (state.html5Scanner) {
-    state.html5Scanner.stop().catch(() => undefined);
-    state.html5Scanner.clear().catch(() => undefined);
-    state.html5Scanner = null;
+    state.html5Scanner.stop().catch(() => undefined).finally(() => {
+      try { state.html5Scanner && state.html5Scanner.clear(); } catch (e) { /* ignore */ }
+      state.html5Scanner = null;
+    });
+  }
+  if (state.zxingReader) {
+    try {
+      state.zxingReader.reset();
+    } catch (error) {
+      console.warn(error);
+    }
+    state.zxingReader = null;
   }
   els.cameraBox.style.display = "none";
   els.startCameraButton.disabled = false;
   els.stopCameraButton.disabled = true;
+}
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
 function loadScript(src) {
@@ -452,10 +529,13 @@ function loadScript(src) {
 }
 
 async function loadScannerScript() {
+  if (window.Html5Qrcode) return;
+  // 안정 버전 고정 + 다중 CDN fallback (CDN 장애 시에도 동작)
   const sources = [
-    "https://unpkg.com/html5-qrcode/html5-qrcode.min.js",
-    "https://cdn.jsdelivr.net/npm/html5-qrcode/html5-qrcode.min.js",
-    "https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js",
+    "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js",
+    "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js",
+    "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
+    "https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
   ];
 
   for (const src of sources) {
@@ -469,17 +549,35 @@ async function loadScannerScript() {
   throw new Error("scanner script unavailable");
 }
 
+async function loadZxingScript() {
+  if (window.ZXing?.BrowserMultiFormatReader) return;
+  // 안정 버전 고정 (0.21.3은 검증된 안정 버전)
+  const sources = [
+    "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js",
+    "https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js",
+    "https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js",
+  ];
+
+  for (const src of sources) {
+    try {
+      await loadScript(src);
+      if (window.ZXing?.BrowserMultiFormatReader) return;
+    } catch (error) {
+      console.warn("ZXing script failed", src, error);
+    }
+  }
+  throw new Error("ZXing unavailable");
+}
+
 async function startHtml5Scanner() {
   try {
     await loadScannerScript();
   } catch (error) {
-    alert("이 브라우저는 카메라 스캔 기능을 불러오지 못했습니다. 수동입력 또는 키보드형 스캐너를 사용해주세요.");
-    return;
+    throw new Error("스캐너 라이브러리 로드 실패. 인터넷 연결을 확인해주세요.");
   }
 
   if (!window.Html5Qrcode) {
-    alert("카메라 스캔 모듈을 사용할 수 없습니다. 수동입력을 사용해주세요.");
-    return;
+    throw new Error("스캐너 모듈을 사용할 수 없습니다.");
   }
 
   els.video.style.display = "none";
@@ -489,24 +587,115 @@ async function startHtml5Scanner() {
   els.stopCameraButton.disabled = false;
 
   const formats = window.Html5QrcodeSupportedFormats
-    ? [Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.CODE_128]
+    ? [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+      ]
     : undefined;
-  state.html5Scanner = new Html5Qrcode("html5Reader", false);
+  state.html5Scanner = new Html5Qrcode("html5Reader", { verbose: false });
 
   const onScan = (decodedText) => {
     els.isbnInput.value = decodedText;
     findAndShow(decodedText);
     stopCamera();
   };
-  const config = { fps: 10, aspectRatio: 1.777778, disableFlip: false, formatsToSupport: formats };
-  const cameras = await Html5Qrcode.getCameras().catch(() => []);
-  const backCamera = cameras.find((camera) => /back|rear|environment|후면/i.test(camera.label)) || cameras[0];
+
+  // iOS Safari에서는 후면 카메라 자동 감지가 불안정 → facingMode 우선 사용
+  const config = {
+    fps: 10,
+    qrbox: { width: 280, height: 160 }, // ISBN 바코드는 가로로 길어 직사각형이 유리
+    aspectRatio: window.innerWidth > window.innerHeight ? 1.7777 : 1.0,
+    disableFlip: false,
+    formatsToSupport: formats,
+    videoConstraints: {
+      facingMode: { ideal: "environment" },
+    },
+  };
 
   try {
-    await state.html5Scanner.start(backCamera ? backCamera.id : { facingMode: "environment" }, config, onScan, () => undefined);
+    // 가장 호환성 높은 방법: facingMode로 시작
+    await state.html5Scanner.start(
+      { facingMode: { ideal: "environment" } },
+      config,
+      onScan,
+      () => undefined,
+    );
   } catch (error) {
-    await state.html5Scanner.start({ facingMode: "environment" }, config, onScan, () => undefined);
+    console.warn("facingMode start failed, trying device enumeration", error);
+    // facingMode 실패 시 카메라 ID로 재시도
+    const cameras = await Html5Qrcode.getCameras().catch(() => []);
+    if (!cameras.length) {
+      throw new Error("사용 가능한 카메라가 없습니다.");
+    }
+    const backCamera = cameras.find((camera) => /back|rear|environment|후면/i.test(camera.label)) || cameras[cameras.length - 1];
+    await state.html5Scanner.start(backCamera.id, config, onScan, () => undefined);
   }
+}
+
+async function startZxingScanner() {
+  try {
+    await loadZxingScript();
+  } catch (error) {
+    throw new Error("ZXing 라이브러리 로드 실패. 네트워크를 확인해주세요.");
+  }
+
+  els.video.style.display = "block";
+  els.html5Reader.style.display = "none";
+  els.cameraBox.style.display = "block";
+  els.startCameraButton.disabled = true;
+  els.stopCameraButton.disabled = false;
+
+  // iOS 필수 속성 보장
+  els.video.setAttribute("playsinline", "true");
+  els.video.setAttribute("muted", "true");
+  els.video.setAttribute("autoplay", "true");
+
+  // hints로 EAN_13(ISBN) 우선 인식 → 인식 속도 향상
+  let hints = null;
+  if (window.ZXing?.DecodeHintType && window.ZXing?.BarcodeFormat) {
+    hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  }
+  state.zxingReader = new ZXing.BrowserMultiFormatReader(hints, 500);
+
+  const onDecode = (result, error) => {
+    if (!result) return;
+    const value = typeof result.getText === "function" ? result.getText() : result.text;
+    if (!value) return;
+    els.isbnInput.value = value;
+    findAndShow(value);
+    stopCamera();
+  };
+
+  if (typeof state.zxingReader.decodeFromConstraints === "function") {
+    await state.zxingReader.decodeFromConstraints(
+      {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      },
+      els.video,
+      onDecode,
+    );
+    return;
+  }
+
+  await state.zxingReader.decodeFromVideoDevice(undefined, els.video, onDecode);
 }
 
 function findAndShow(value) {
@@ -560,7 +749,13 @@ async function loadHostedStock() {
 }
 
 els.findButton.addEventListener("click", () => findAndShow(els.isbnInput.value));
-els.startCameraButton.addEventListener("click", () => startCamera().catch((error) => alert(`카메라를 열 수 없습니다: ${error.message}`)));
+els.startCameraButton.addEventListener("click", () => startCamera().catch((error) => {
+  console.warn("Camera start failed", error);
+  // startCamera 내부에서 이미 alert를 띄웠으므로 여기서는 버튼 상태만 복구
+  els.startCameraButton.disabled = false;
+  els.stopCameraButton.disabled = true;
+  els.cameraBox.style.display = "none";
+}));
 els.stopCameraButton.addEventListener("click", stopCamera);
 els.downloadRiskButton.addEventListener("click", () => {
   renderDashboard();
@@ -592,6 +787,44 @@ els.isbnInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     findAndShow(els.isbnInput.value);
     els.isbnInput.select();
+  }
+});
+
+// 자동 Enter 처리: ISBN 13자리 또는 10자리 완성 시 자동 조회
+// 키보드형 바코드 스캐너(USB/Bluetooth)가 Enter를 보내지 않는 모델에서도 동작
+let autoSubmitTimer = null;
+let lastInputAt = 0;
+els.isbnInput.addEventListener("input", () => {
+  const now = Date.now();
+  const sinceLast = now - lastInputAt;
+  lastInputAt = now;
+
+  const raw = els.isbnInput.value.trim();
+  const cleaned = raw.replace(/[^0-9Xx]/g, "");
+
+  // 완전한 ISBN 형태이면 즉시 조회 (50ms 디바운스로 마지막 글자까지 보장)
+  const isComplete = /^[0-9]{13}$/.test(cleaned)
+    || /^[0-9]{10}$/.test(cleaned)
+    || /^[0-9]{9}[Xx]$/.test(cleaned);
+
+  if (autoSubmitTimer) clearTimeout(autoSubmitTimer);
+  if (isComplete) {
+    autoSubmitTimer = setTimeout(() => {
+      findAndShow(cleaned);
+      els.isbnInput.select();
+    }, 50);
+    return;
+  }
+
+  // 빠른 연속 입력(키보드형 스캐너 패턴, 글자 간 30ms 이내) + 길이 8자리 이상이면 자동 처리
+  if (sinceLast > 0 && sinceLast < 30 && cleaned.length >= 8) {
+    autoSubmitTimer = setTimeout(() => {
+      const v = els.isbnInput.value.trim().replace(/[^0-9Xx]/g, "");
+      if (v.length >= 8) {
+        findAndShow(v);
+        els.isbnInput.select();
+      }
+    }, 150);
   }
 });
 
