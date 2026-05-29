@@ -1,4 +1,4 @@
-const APP_VERSION = "2.0.4";
+const APP_VERSION = "2.0.5";
 
 const state = {
   masterRows: [],
@@ -29,6 +29,7 @@ const els = {
   cameraBox: document.querySelector("#cameraBox"),
   video: document.querySelector("#video"),
   html5Reader: document.querySelector("#html5Reader"),
+  scanStatus: document.querySelector("#scanStatus"),
   answer: document.querySelector("#answer"),
   riskBody: document.querySelector("#riskBody"),
   zeroBody: document.querySelector("#zeroBody"),
@@ -383,117 +384,164 @@ function showResult(row) {
   `;
 }
 
+function setScanStatus(msg, type) {
+  if (!els.scanStatus) return;
+  els.scanStatus.hidden = false;
+  els.scanStatus.textContent = msg;
+  els.scanStatus.className = "scan-status" + (type ? " " + type : "");
+}
+
+function clearScanStatus() {
+  if (!els.scanStatus) return;
+  els.scanStatus.hidden = true;
+  els.scanStatus.textContent = "";
+  els.scanStatus.className = "scan-status";
+}
+
+function onScanned(value) {
+  els.isbnInput.value = value;
+  setScanStatus(`인식됨: ${value}`, "ok");
+  findAndShow(value);
+  stopCamera(true);
+}
+
+function handleCameraError(error) {
+  const name = (error && error.name) || "";
+  let msg;
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    msg = "카메라 권한이 거부됨. iPhone: 설정 > Safari > 카메라 > '허용' 후 새로고침. (인앱 브라우저면 Safari로 여세요)";
+  } else if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") {
+    msg = "후면 카메라를 찾지 못했습니다.";
+  } else if (name === "NotReadableError" || name === "TrackStartError") {
+    msg = "다른 앱이 카메라를 사용 중입니다. 그 앱을 닫고 다시 시도해주세요.";
+  } else {
+    msg = `카메라 오류: ${(error && (error.message || name)) || error}`;
+  }
+  setScanStatus(msg, "error");
+  els.startCameraButton.disabled = false;
+  els.stopCameraButton.disabled = true;
+}
+
 async function startCamera() {
-  // 1) 카메라 권한 사전 확인 (iOS에서 명확한 에러 메시지 출력)
+  clearScanStatus();
+
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    alert("이 브라우저는 카메라를 지원하지 않습니다.\n\n[해결]\n- HTTPS 주소(https://...)인지 확인\n- iPhone: Safari로 열기 (Chrome/Naver/Kakao 인앱 X)\n- Android: 최신 Chrome 사용");
+    setScanStatus("이 브라우저는 카메라를 지원하지 않습니다. HTTPS 주소인지, iPhone은 Safari로 열었는지 확인하세요.", "error");
     throw new Error("getUserMedia unsupported");
   }
 
+  // 1) 카메라를 '딱 한 번'만 연다 (프로브 없음 → iOS 카메라 잠김/제스처 소실 방지)
+  setScanStatus("카메라 여는 중…");
+  let stream;
   try {
-    // 사전 권한 요청: 실패하면 즉시 명확한 메시지 출력
-    const probeStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" } },
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false,
     });
-    // 권한만 확인 후 즉시 종료, 실제 스트림은 라이브러리가 다시 연다
-    probeStream.getTracks().forEach((track) => track.stop());
   } catch (error) {
-    const msg = error && error.name === "NotAllowedError"
-      ? "카메라 권한이 거부되었습니다.\n\n[iPhone]\n설정 > Safari > 카메라 > '허용' 또는 '확인'\n그 다음 Safari 새로고침\n\n[Android]\n주소창 옆 자물쇠 > 사이트 설정 > 카메라 허용"
-      : `카메라를 열 수 없습니다: ${error?.message || error}\n\nHTTPS 주소인지, 다른 앱이 카메라를 점유 중인지 확인해주세요.`;
-    alert(msg);
+    console.warn("getUserMedia failed", error);
+    handleCameraError(error);
     throw error;
   }
+  state.mediaStream = stream;
 
-  // 2) iOS는 html5-qrcode 우선 (ZXing보다 iOS Safari에서 안정적, 재초기화 지원)
-  if (isIOS()) {
-    try {
-      await startHtml5Scanner();
-      return;
-    } catch (error) {
-      console.warn("Html5Qrcode failed on iOS, fallback to ZXing", error);
-    }
-    try {
-      await startZxingScanner();
-      return;
-    } catch (error) {
-      alert(`스캐너 초기화 실패: ${error?.message || error}\n네트워크 상태를 확인하고 다시 시도해주세요.`);
-      throw error;
-    }
-  }
-
-  // 3) Android/PC: BarcodeDetector 네이티브 우선 (가장 빠름)
-  if ("BarcodeDetector" in window) {
-    try {
-      await startNativeBarcodeDetector();
-      return;
-    } catch (error) {
-      console.warn("Native BarcodeDetector failed, fallback to Html5Qrcode", error);
-    }
-  }
-
-  // 4) 최후 fallback
-  try {
-    await startHtml5Scanner();
-  } catch (error) {
-    console.warn("Html5Qrcode failed, fallback to ZXing", error);
-    await startZxingScanner();
-  }
-}
-
-async function startNativeBarcodeDetector() {
-  const detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128", "code_39"] });
-  state.mediaStream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: "environment" } },
-    audio: false,
-  });
-  els.video.style.display = "block";
+  // 2) 영상 화면에 연결
   els.html5Reader.style.display = "none";
-  els.video.srcObject = state.mediaStream;
-  els.video.setAttribute("playsinline", "true");
-  els.video.setAttribute("muted", "true");
-  await els.video.play().catch(() => undefined);
+  els.video.style.display = "block";
   els.cameraBox.style.display = "block";
+  els.video.setAttribute("playsinline", "true");
+  els.video.setAttribute("autoplay", "true");
+  els.video.muted = true;
+  els.video.srcObject = stream;
   els.startCameraButton.disabled = true;
   els.stopCameraButton.disabled = false;
+  try {
+    await els.video.play();
+  } catch (error) {
+    console.warn("video.play() warning", error);
+  }
 
+  // 3) 디코더 선택: BarcodeDetector(네이티브) → ZXing(같은 영상 재사용)
+  if ("BarcodeDetector" in window) {
+    try {
+      const supported = await window.BarcodeDetector.getSupportedFormats();
+      if (supported.includes("ean_13")) {
+        setScanStatus("바코드를 화면 중앙에 비춰주세요", "ok");
+        const detector = new window.BarcodeDetector({
+          formats: ["ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e"],
+        });
+        runDetectorLoop(detector);
+        return;
+      }
+    } catch (error) {
+      console.warn("BarcodeDetector unavailable, fallback to ZXing", error);
+    }
+  }
+
+  setScanStatus("스캐너 로딩 중…");
+  try {
+    await loadZxingScript();
+  } catch (error) {
+    setScanStatus("스캐너 로딩 실패. 인터넷 연결을 확인하고 다시 시도해주세요.", "error");
+    stopCamera();
+    throw error;
+  }
+  setScanStatus("바코드를 화면 중앙에 비춰주세요", "ok");
+  startZxingOnVideo();
+}
+
+function runDetectorLoop(detector) {
   const scan = async () => {
     if (!state.mediaStream) return;
     try {
       const codes = await detector.detect(els.video);
-      if (codes.length) {
-        const value = codes[0].rawValue;
-        els.isbnInput.value = value;
-        findAndShow(value);
-        stopCamera();
+      if (codes && codes.length) {
+        onScanned(codes[0].rawValue);
         return;
       }
     } catch (error) {
-      console.warn(error);
+      // 일시적 오류는 무시하고 계속 스캔
     }
     state.barcodeLoop = window.requestAnimationFrame(scan);
   };
   state.barcodeLoop = window.requestAnimationFrame(scan);
 }
 
-function stopCamera() {
+function startZxingOnVideo() {
+  let hints = null;
+  if (window.ZXing && window.ZXing.DecodeHintType && window.ZXing.BarcodeFormat) {
+    hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  }
+  state.zxingReader = new ZXing.BrowserMultiFormatReader(hints, 300);
+
+  const onDecode = (result) => {
+    if (!result) return;
+    const value = typeof result.getText === "function" ? result.getText() : result.text;
+    if (value) onScanned(value);
+  };
+
+  // 이미 재생 중인 video를 디코딩 → 카메라를 다시 열지 않음 (iOS 안정성 핵심)
+  if (typeof state.zxingReader.decodeFromVideoElement === "function") {
+    state.zxingReader.decodeFromVideoElement(els.video, onDecode);
+  } else if (typeof state.zxingReader.decodeFromStream === "function") {
+    state.zxingReader.decodeFromStream(state.mediaStream, els.video, onDecode);
+  } else {
+    state.zxingReader.decodeFromVideoDevice(undefined, els.video, onDecode);
+  }
+}
+
+function stopCamera(keepStatus) {
   if (state.barcodeLoop) window.cancelAnimationFrame(state.barcodeLoop);
   state.barcodeLoop = null;
-  if (state.mediaStream) {
-    state.mediaStream.getTracks().forEach((track) => track.stop());
-  }
-  state.mediaStream = null;
-  if (els.video) {
-    try { els.video.pause(); } catch (e) { /* ignore */ }
-    els.video.srcObject = null;
-  }
-  if (state.html5Scanner) {
-    state.html5Scanner.stop().catch(() => undefined).finally(() => {
-      try { state.html5Scanner && state.html5Scanner.clear(); } catch (e) { /* ignore */ }
-      state.html5Scanner = null;
-    });
-  }
   if (state.zxingReader) {
     try {
       state.zxingReader.reset();
@@ -502,9 +550,24 @@ function stopCamera() {
     }
     state.zxingReader = null;
   }
+  if (state.html5Scanner) {
+    state.html5Scanner.stop().catch(() => undefined).finally(() => {
+      try { state.html5Scanner && state.html5Scanner.clear(); } catch (e) { /* ignore */ }
+      state.html5Scanner = null;
+    });
+  }
+  if (state.mediaStream) {
+    state.mediaStream.getTracks().forEach((track) => track.stop());
+  }
+  state.mediaStream = null;
+  if (els.video) {
+    try { els.video.pause(); } catch (e) { /* ignore */ }
+    els.video.srcObject = null;
+  }
   els.cameraBox.style.display = "none";
   els.startCameraButton.disabled = false;
   els.stopCameraButton.disabled = true;
+  if (!keepStatus) clearScanStatus();
 }
 
 function isIOS() {
@@ -530,27 +593,6 @@ function loadScript(src) {
   });
 }
 
-async function loadScannerScript() {
-  if (window.Html5Qrcode) return;
-  // 안정 버전 고정 + 다중 CDN fallback (CDN 장애 시에도 동작)
-  const sources = [
-    "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js",
-    "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js",
-    "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
-    "https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
-  ];
-
-  for (const src of sources) {
-    try {
-      await loadScript(src);
-      if (window.Html5Qrcode) return;
-    } catch (error) {
-      console.warn("Scanner script failed", src, error);
-    }
-  }
-  throw new Error("scanner script unavailable");
-}
-
 async function loadZxingScript() {
   if (window.ZXing?.BrowserMultiFormatReader) return;
   // 안정 버전 고정 (0.21.3은 검증된 안정 버전)
@@ -571,134 +613,6 @@ async function loadZxingScript() {
   throw new Error("ZXing unavailable");
 }
 
-async function startHtml5Scanner() {
-  try {
-    await loadScannerScript();
-  } catch (error) {
-    throw new Error("스캐너 라이브러리 로드 실패. 인터넷 연결을 확인해주세요.");
-  }
-
-  if (!window.Html5Qrcode) {
-    throw new Error("스캐너 모듈을 사용할 수 없습니다.");
-  }
-
-  els.video.style.display = "none";
-  els.html5Reader.style.display = "block";
-  els.cameraBox.style.display = "block";
-  els.startCameraButton.disabled = true;
-  els.stopCameraButton.disabled = false;
-
-  const formats = window.Html5QrcodeSupportedFormats
-    ? [
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.EAN_8,
-        Html5QrcodeSupportedFormats.CODE_128,
-        Html5QrcodeSupportedFormats.CODE_39,
-        Html5QrcodeSupportedFormats.UPC_A,
-        Html5QrcodeSupportedFormats.UPC_E,
-      ]
-    : undefined;
-  state.html5Scanner = new Html5Qrcode("html5Reader", { verbose: false });
-
-  const onScan = (decodedText) => {
-    els.isbnInput.value = decodedText;
-    findAndShow(decodedText);
-    stopCamera();
-  };
-
-  // iOS Safari에서는 후면 카메라 자동 감지가 불안정 → facingMode 우선 사용
-  const config = {
-    fps: 10,
-    qrbox: { width: 280, height: 160 }, // ISBN 바코드는 가로로 길어 직사각형이 유리
-    aspectRatio: window.innerWidth > window.innerHeight ? 1.7777 : 1.0,
-    disableFlip: false,
-    formatsToSupport: formats,
-    videoConstraints: {
-      facingMode: { ideal: "environment" },
-    },
-  };
-
-  try {
-    // 가장 호환성 높은 방법: facingMode로 시작
-    await state.html5Scanner.start(
-      { facingMode: { ideal: "environment" } },
-      config,
-      onScan,
-      () => undefined,
-    );
-  } catch (error) {
-    console.warn("facingMode start failed, trying device enumeration", error);
-    // facingMode 실패 시 카메라 ID로 재시도
-    const cameras = await Html5Qrcode.getCameras().catch(() => []);
-    if (!cameras.length) {
-      throw new Error("사용 가능한 카메라가 없습니다.");
-    }
-    const backCamera = cameras.find((camera) => /back|rear|environment|후면/i.test(camera.label)) || cameras[cameras.length - 1];
-    await state.html5Scanner.start(backCamera.id, config, onScan, () => undefined);
-  }
-}
-
-async function startZxingScanner() {
-  try {
-    await loadZxingScript();
-  } catch (error) {
-    throw new Error("ZXing 라이브러리 로드 실패. 네트워크를 확인해주세요.");
-  }
-
-  els.video.style.display = "block";
-  els.html5Reader.style.display = "none";
-  els.cameraBox.style.display = "block";
-  els.startCameraButton.disabled = true;
-  els.stopCameraButton.disabled = false;
-
-  // iOS 필수 속성 보장
-  els.video.setAttribute("playsinline", "true");
-  els.video.setAttribute("muted", "true");
-  els.video.setAttribute("autoplay", "true");
-
-  // hints로 EAN_13(ISBN) 우선 인식 → 인식 속도 향상
-  let hints = null;
-  if (window.ZXing?.DecodeHintType && window.ZXing?.BarcodeFormat) {
-    hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.EAN_13,
-      ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.CODE_128,
-      ZXing.BarcodeFormat.CODE_39,
-      ZXing.BarcodeFormat.UPC_A,
-      ZXing.BarcodeFormat.UPC_E,
-    ]);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-  }
-  state.zxingReader = new ZXing.BrowserMultiFormatReader(hints, 500);
-
-  const onDecode = (result, error) => {
-    if (!result) return;
-    const value = typeof result.getText === "function" ? result.getText() : result.text;
-    if (!value) return;
-    els.isbnInput.value = value;
-    findAndShow(value);
-    stopCamera();
-  };
-
-  if (typeof state.zxingReader.decodeFromConstraints === "function") {
-    await state.zxingReader.decodeFromConstraints(
-      {
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      },
-      els.video,
-      onDecode,
-    );
-    return;
-  }
-
-  await state.zxingReader.decodeFromVideoDevice(undefined, els.video, onDecode);
-}
 
 function findAndShow(value) {
   const row = lookup(value);

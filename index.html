@@ -12,13 +12,13 @@
     <link rel="manifest" href="manifest.webmanifest">
     <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="assets/icon-180.png">
-    <link rel="stylesheet" href="styles.css?v=2.0.4">
+    <link rel="stylesheet" href="styles.css?v=2.0.5">
   </head>
   <body>
     <main>
       <header>
         <div>
-          <h1>ISBN 재고 위치 조회 <span class="version-badge">v2.0.4</span></h1>
+          <h1>ISBN 재고 위치 조회 <span class="version-badge">v2.0.5</span></h1>
           <p class="subtitle">ISBN 스캔, 위치 조회, 0재고와 위험재고 관리</p>
         </div>
         <div class="header-actions">
@@ -40,6 +40,7 @@
             <button id="stopCameraButton" class="danger" type="button" disabled>카메라 끄기</button>
           </div>
           <p class="small scan-help">아이폰은 반드시 <b>Safari</b> 또는 홈 화면에 추가한 앱에서 열어야 카메라가 동작합니다. (Chrome/Naver/Kakao 인앱 브라우저 불가)</p>
+          <p id="scanStatus" class="scan-status" hidden></p>
           <div id="cameraBox" class="camera-box">
             <video id="video" autoplay muted playsinline></video>
             <div id="html5Reader"></div>
@@ -140,6 +141,6 @@
         </div>
       </section>
     </main>
-    <script src="app.js?v=2.0.4"></script>
+    <script src="app.js?v=2.0.5"></script>
   </body>
 </html>
