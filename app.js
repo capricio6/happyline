@@ -1,3 +1,5 @@
+const APP_VERSION = "2.0";
+
 const state = {
   masterRows: [],
   stockRows: [],
@@ -847,6 +849,7 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
 }
 
 window.addEventListener("load", loadHostedStock);
+console.log(`%cISBN 재고 위치 조회 v${APP_VERSION}`, "color:#176b87;font-weight:700;font-size:13px");
 
 function riskExcludedSet() {
   try {
