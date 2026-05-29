@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>카메라 진단 테스트</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 16px;
+      font-family: "Malgun Gothic", -apple-system, sans-serif;
+      background: #f4f7f9; color: #172026; line-height: 1.5;
+    }
+    h1 { font-size: 22px; margin: 0 0 12px; }
+    h2 { font-size: 16px; margin: 18px 0 8px; }
+    button {
+      width: 100%; min-height: 56px; font-size: 18px; font-weight: 700;
+      border: none; border-radius: 10px; background: #176b87; color: #fff;
+      margin: 8px 0; cursor: pointer;
+    }
+    button.gray { background: #5b6670; }
+    .info {
+      background: #fff; border: 1px solid #d7dee5; border-radius: 8px;
+      padding: 12px; font-size: 14px; word-break: break-all;
+    }
+    .info div { padding: 3px 0; border-bottom: 1px solid #eef2f5; }
+    .info b { color: #104e62; }
+    .ok { color: #176b3a; font-weight: 700; }
+    .bad { color: #b3261e; font-weight: 700; }
+    #log {
+      background: #101820; color: #d8f0ff; font-size: 13px;
+      border-radius: 8px; padding: 12px; margin-top: 8px;
+      white-space: pre-wrap; word-break: break-all; min-height: 120px;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+    }
+    video {
+      width: 100%; max-height: 320px; background: #000;
+      border-radius: 8px; margin-top: 8px; display: none;
+    }
+    .step { font-size: 19px; font-weight: 800; text-align: center; padding: 14px;
+      border-radius: 8px; margin: 10px 0; background: #fff7e6; color: #7a5a00;
+      border: 1px solid #f0d28a; }
+    .step.ok { background: #eaf6ee; color: #176b3a; border-color: #a9d8ba; }
+    .step.bad { background: #fdecea; color: #b3261e; border-color: #f0b3ae; }
+  </style>
+</head>
+<body>
+  <h1>📷 카메라 진단 테스트 v1</h1>
+  <p style="font-size:14px;color:#5b6670;margin-top:0">아래 "① 카메라 켜기" 버튼을 누르고, 화면에 나타나는 내용을 캡처해서 보내주세요.</p>
+
+  <div id="bigStep" class="step">준비됨. 아래 버튼을 누르세요.</div>
+
+  <button id="startBtn">① 카메라 켜기</button>
+  <button id="stopBtn" class="gray">② 카메라 끄기</button>
+
+  <video id="video" autoplay muted playsinline></video>
+
+  <h2>환경 정보</h2>
+  <div id="env" class="info"></div>
+
+  <h2>실행 로그</h2>
+  <div id="log"></div>
+
+  <script>
+    var logEl = document.getElementById("log");
+    var stepEl = document.getElementById("bigStep");
+    var video = document.getElementById("video");
+    var stream = null;
+    var loop = null;
+    var zxing = null;
+
+    function log(msg) {
+      var t = new Date().toLocaleTimeString();
+      logEl.textContent += "[" + t + "] " + msg + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    function step(msg, kind) {
+      stepEl.textContent = msg;
+      stepEl.className = "step" + (kind ? " " + kind : "");
+    }
+
+    // 전역 에러도 화면에 잡기
+    window.onerror = function (m, src, line, col, err) {
+      log("‼️ 전역에러: " + m + " @" + line + ":" + col);
+      return false;
+    };
+    window.addEventListener("unhandledrejection", function (e) {
+      log("‼️ Promise거부: " + (e.reason && (e.reason.message || e.reason)));
+    });
+
+    // 환경 정보 표시
+    function showEnv() {
+      var env = document.getElementById("env");
+      function row(label, value, good) {
+        var cls = good === true ? "ok" : (good === false ? "bad" : "");
+        return "<div><b>" + label + ":</b> <span class='" + cls + "'>" + value + "</span></div>";
+      }
+      var isHttps = location.protocol === "https:";
+      var hasMD = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+      var hasBD = ("BarcodeDetector" in window);
+      var standalone = (window.navigator.standalone === true) ||
+        (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+      var ua = navigator.userAgent;
+      var inApp = /KAKAOTALK|NAVER|Instagram|FBAN|FBAV|Line|DaumApps/i.test(ua);
+
+      var html = "";
+      html += row("프로토콜", location.protocol, isHttps);
+      html += row("주소", location.host, null);
+      html += row("HTTPS 보안", isHttps ? "예 ✓" : "아니오 ✗ (카메라 불가)", isHttps);
+      html += row("mediaDevices API", hasMD ? "있음 ✓" : "없음 ✗", hasMD);
+      html += row("BarcodeDetector", hasBD ? "지원 ✓" : "미지원 (ZXing 사용)", null);
+      html += row("홈화면 앱(standalone)", standalone ? "예" : "아니오(브라우저)", null);
+      html += row("인앱 브라우저", inApp ? "예 ✗ (Safari로 여세요!)" : "아니오 ✓", !inApp);
+      html += row("User Agent", ua, null);
+      env.innerHTML = html;
+
+      log("환경 점검 완료");
+      log("HTTPS=" + isHttps + " / mediaDevices=" + hasMD + " / BarcodeDetector=" + hasBD);
+      if (!isHttps) step("✗ HTTPS가 아닙니다. https:// 주소로 여세요.", "bad");
+      else if (!hasMD) step("✗ 이 브라우저는 카메라 API가 없습니다.", "bad");
+      else if (inApp) step("✗ 인앱 브라우저입니다. Safari로 여세요!", "bad");
+    }
+
+    document.getElementById("startBtn").addEventListener("click", function () {
+      startCamera();
+    });
+    document.getElementById("stopBtn").addEventListener("click", function () {
+      stopCamera();
+      step("카메라를 껐습니다.", "");
+    });
+
+    function startCamera() {
+      log("=== 카메라 켜기 시작 ===");
+      step("카메라 여는 중…");
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        step("✗ getUserMedia 없음", "bad");
+        log("✗ navigator.mediaDevices.getUserMedia 가 없습니다.");
+        return;
+      }
+
+      log("getUserMedia 호출 (facingMode: environment)…");
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+      }).then(function (s) {
+        stream = s;
+        log("✓ 카메라 스트림 획득 성공!");
+        var tracks = s.getVideoTracks();
+        if (tracks.length) {
+          log("카메라 이름: " + (tracks[0].label || "(라벨 없음)"));
+          var settings = tracks[0].getSettings ? tracks[0].getSettings() : {};
+          log("해상도: " + (settings.width || "?") + "x" + (settings.height || "?"));
+        }
+        video.style.display = "block";
+        video.setAttribute("playsinline", "true");
+        video.muted = true;
+        video.srcObject = s;
+        return video.play();
+      }).then(function () {
+        log("✓ video.play() 성공 — 영상이 보이면 카메라는 정상입니다.");
+        step("✓ 카메라 켜짐! 영상이 보이나요?", "ok");
+        startDecoder();
+      }).catch(function (err) {
+        var name = err && err.name ? err.name : "?";
+        log("✗ 실패: name=" + name + " / message=" + (err && err.message));
+        var hint = "";
+        if (name === "NotAllowedError" || name === "SecurityError")
+          hint = "권한 거부됨 → 설정>Safari>카메라>허용 후 새로고침";
+        else if (name === "NotFoundError" || name === "OverconstrainedError")
+          hint = "후면 카메라를 못 찾음";
+        else if (name === "NotReadableError")
+          hint = "다른 앱이 카메라 사용 중 → 그 앱 종료";
+        step("✗ 카메라 실패: " + name + (hint ? " — " + hint : ""), "bad");
+      });
+    }
+
+    function startDecoder() {
+      // BarcodeDetector 우선
+      if ("BarcodeDetector" in window) {
+        log("BarcodeDetector 발견 — 지원 포맷 확인 중…");
+        window.BarcodeDetector.getSupportedFormats().then(function (fmts) {
+          log("지원 포맷: " + fmts.join(", "));
+          if (fmts.indexOf("ean_13") !== -1) {
+            log("✓ ean_13 지원 → BarcodeDetector로 스캔 시작");
+            var det = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128"] });
+            detectLoop(det);
+          } else {
+            log("ean_13 미지원 → ZXing 사용");
+            useZxing();
+          }
+        }).catch(function (e) {
+          log("BarcodeDetector 포맷 확인 실패 → ZXing 사용: " + e);
+          useZxing();
+        });
+      } else {
+        log("BarcodeDetector 없음 → ZXing 사용");
+        useZxing();
+      }
+    }
+
+    function detectLoop(det) {
+      var scan = function () {
+        if (!stream) return;
+        det.detect(video).then(function (codes) {
+          if (codes && codes.length) {
+            log("🎉 스캔 성공! 값=" + codes[0].rawValue);
+            step("🎉 인식됨: " + codes[0].rawValue, "ok");
+            stopCamera();
+          } else {
+            loop = requestAnimationFrame(scan);
+          }
+        }).catch(function () {
+          loop = requestAnimationFrame(scan);
+        });
+      };
+      loop = requestAnimationFrame(scan);
+    }
+
+    function useZxing() {
+      log("ZXing 스크립트 로딩 중…");
+      var src = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+      var sc = document.createElement("script");
+      sc.src = src;
+      sc.onload = function () {
+        if (!(window.ZXing && window.ZXing.BrowserMultiFormatReader)) {
+          log("✗ ZXing 로드됐으나 객체 없음");
+          step("✗ 스캐너 로드 실패", "bad");
+          return;
+        }
+        log("✓ ZXing 로드 성공 → 스캔 시작");
+        zxing = new window.ZXing.BrowserMultiFormatReader();
+        var onDecode = function (result) {
+          if (!result) return;
+          var v = result.getText ? result.getText() : result.text;
+          if (v) {
+            log("🎉 스캔 성공! 값=" + v);
+            step("🎉 인식됨: " + v, "ok");
+            stopCamera();
+          }
+        };
+        try {
+          if (typeof zxing.decodeFromVideoElement === "function") {
+            log("decodeFromVideoElement 사용");
+            zxing.decodeFromVideoElement(video, onDecode);
+          } else {
+            log("decodeFromVideoDevice 사용");
+            zxing.decodeFromVideoDevice(null, video, onDecode);
+          }
+        } catch (e) {
+          log("✗ ZXing 디코딩 시작 실패: " + e);
+          step("✗ 스캔 시작 실패", "bad");
+        }
+      };
+      sc.onerror = function () {
+        log("✗ ZXing 스크립트 로드 실패 (네트워크?)");
+        step("✗ 스캐너 다운로드 실패 — 인터넷 확인", "bad");
+      };
+      document.head.appendChild(sc);
+    }
+
+    function stopCamera() {
+      if (loop) cancelAnimationFrame(loop);
+      loop = null;
+      if (zxing) { try { zxing.reset(); } catch (e) {} zxing = null; }
+      if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); }
+      stream = null;
+      try { video.pause(); } catch (e) {}
+      video.srcObject = null;
+      video.style.display = "none";
+      log("카메라 정지");
+    }
+
+    // 시작
+    showEnv();
+  </script>
+</body>
+</html>
