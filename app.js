@@ -1,4 +1,4 @@
-const APP_VERSION = "2.0";
+const APP_VERSION = "2.0.3";
 
 const state = {
   masterRows: [],
@@ -785,37 +785,19 @@ els.riskBody.addEventListener("change", (event) => {
   renderDashboard();
 });
 
+// 조회 트리거 정리
+// - 카메라 스캔: 스캔 즉시 onScan/onDecode 콜백에서 findAndShow 자동 호출 (아래 핸들러와 무관)
+// - 키보드형 바코드 스캐너: 13자리 + Enter 자동 송신 → 아래 Enter 핸들러가 처리
+// - 손 입력: Enter 키 또는 "조회" 버튼으로 처리
+// input 이벤트 자동 조회는 손 입력 도중 텍스트를 덮어쓰는 문제가 있어 제거함.
 els.isbnInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
+    event.preventDefault();
     findAndShow(els.isbnInput.value);
-    els.isbnInput.select();
+    // select()를 호출하지 않음: 손 입력 중 텍스트가 선택 상태로 남아
+    // 다음 글자 입력 시 통째로 덮어쓰이는 문제를 방지.
+    // 다음 스캔 시에는 카메라/스캐너가 값을 통째로 덮어쓰므로 문제 없음.
   }
-});
-
-// 자동 Enter 처리: ISBN-13(13자리) 완성 시에만 자동 조회
-// 한국 도서는 2007년부터 ISBN-13만 사용하므로 10자리 자동 감지는 제거
-// (10자리에서 자동 발동하면 손으로 11~13자리 마저 입력할 때 select()로 인해 텍스트가 덮어쓰여 사라짐)
-// 키보드형 스캐너(USB/Bluetooth)는 거의 모두 Enter를 자동 송신하므로 별도 휴리스틱 불필요
-// 500ms 디바운스: 손 입력 간격(통상 100~300ms)을 안전하게 넘는 길이로 설정
-let autoSubmitTimer = null;
-els.isbnInput.addEventListener("input", () => {
-  const raw = els.isbnInput.value.trim();
-  const cleaned = raw.replace(/[^0-9Xx]/g, "");
-
-  if (autoSubmitTimer) clearTimeout(autoSubmitTimer);
-
-  // 정확히 13자리 숫자일 때만 자동 조회
-  if (!/^[0-9]{13}$/.test(cleaned)) return;
-
-  const snapshot = cleaned;
-  autoSubmitTimer = setTimeout(() => {
-    const current = els.isbnInput.value.trim().replace(/[^0-9Xx]/g, "");
-    // 그 사이 값이 바뀌었으면(예: 14자리로 늘었거나 backspace) 취소
-    if (current === snapshot) {
-      findAndShow(snapshot);
-      els.isbnInput.select();
-    }
-  }, 500);
 });
 
 window.addEventListener("beforeinstallprompt", (event) => {
