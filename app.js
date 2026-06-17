@@ -173,9 +173,9 @@ function colText(n, from) {
 
 // 위치코드 구조: 창고동 / 가로줄(줄) / 세로줄 / 층
 //  - 가로줄(둘째 글자): 영문자면 'b줄', 숫자면 '다섯번째 줄'처럼 차례로 표기 (숫자→문자 변환 안 함)
-//  - 세로줄 방향어: 둘째 글자가 영문자면 '왼쪽에서부터 N번째', 숫자면 방향어 없이 'N번째'
+//  - 세로줄 방향어: 둘째 글자가 영문자면 '왼쪽에서 N번째', 숫자면 방향어 없이 'N번째'
 //  - 가로줄 뒤 남은 숫자가 2자리면 [세로줄, 층], 1자리면 [층]만(세로줄=첫번째 기본값)
-//  예) Ab11 → A동 b줄 왼쪽에서부터 첫번째 1층 / B511 → B동 다섯번째 줄 첫번째 1층
+//  예) Ab11 → A동 b줄 왼쪽에서 첫번째 1층 / B511 → B동 다섯번째 줄 첫번째 1층
 function buildLocation(buildingRaw, rowLetterRaw, digits, original) {
   const building = /[A-Za-z]/.test(buildingRaw) ? buildingRaw.toUpperCase() : buildingRaw;
   const rowLetter = rowLetterRaw ? rowLetterRaw.toLowerCase() : "";
@@ -189,7 +189,7 @@ function buildLocation(buildingRaw, rowLetterRaw, digits, original) {
   if (rowLetter) {
     rowLabel = `${rowLetter}줄`;
     rest = digits;
-    dir = "왼쪽에서부터";
+    dir = "왼쪽에서";
   } else if (digits.length >= 1) {
     rowLabel = `${ordinal(digits[0])} 줄`;
     rest = digits.slice(1);
