@@ -24,6 +24,8 @@ const els = {
   findButton: document.querySelector("#findButton"),
   startCameraButton: document.querySelector("#startCameraButton"),
   stopCameraButton: document.querySelector("#stopCameraButton"),
+  photoScanButton: document.querySelector("#photoScanButton"),
+  photoInput: document.querySelector("#photoInput"),
   cameraBox: document.querySelector("#cameraBox"),
   video: document.querySelector("#video"),
   html5Reader: document.querySelector("#html5Reader"),
@@ -756,19 +758,7 @@ async function startZxingScanner() {
   els.video.setAttribute("autoplay", "true");
 
   // hints로 EAN_13(ISBN) 우선 인식 → 인식 속도 향상
-  let hints = null;
-  if (window.ZXing?.DecodeHintType && window.ZXing?.BarcodeFormat) {
-    hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.EAN_13,
-      ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.CODE_128,
-      ZXing.BarcodeFormat.CODE_39,
-      ZXing.BarcodeFormat.UPC_A,
-      ZXing.BarcodeFormat.UPC_E,
-    ]);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-  }
+  const hints = buildZxingHints();
   state.zxingReader = new ZXing.BrowserMultiFormatReader(hints, 500);
 
   const onDecode = (result, error) => {
@@ -797,6 +787,100 @@ async function startZxingScanner() {
   }
 
   await state.zxingReader.decodeFromVideoDevice(undefined, els.video, onDecode);
+}
+
+// ZXing 디코딩 힌트(ISBN=EAN_13 우선 + TRY_HARDER)를 공통으로 생성
+function buildZxingHints() {
+  if (!(window.ZXing?.DecodeHintType && window.ZXing?.BarcodeFormat)) return null;
+  const hints = new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.CODE_128,
+    ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.UPC_A,
+    ZXing.BarcodeFormat.UPC_E,
+  ]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  return hints;
+}
+
+// 정지 사진 1장에서 바코드를 디코딩 (iOS에서 가장 안정적인 경로)
+// 우선순위: 네이티브 BarcodeDetector(안드로이드) → ZXing → html5-qrcode scanFile
+async function decodeImageFile(file) {
+  // 1) BarcodeDetector: 이미지에서 직접 디코딩 (Android/Chrome 계열)
+  if ("BarcodeDetector" in window) {
+    try {
+      const detector = new BarcodeDetector({
+        formats: ["ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e"],
+      });
+      const bitmap = await createImageBitmap(file);
+      const codes = await detector.detect(bitmap);
+      if (bitmap.close) bitmap.close();
+      if (codes && codes.length) return codes[0].rawValue;
+    } catch (error) {
+      console.warn("BarcodeDetector image decode failed", error);
+    }
+  }
+
+  // 2) ZXing 정지영상 디코딩 (iOS Safari 포함 대부분에서 동작)
+  try {
+    await loadZxingScript();
+    const reader = new ZXing.BrowserMultiFormatReader(buildZxingHints());
+    const url = URL.createObjectURL(file);
+    try {
+      const result = await reader.decodeFromImageUrl(url);
+      const value = typeof result.getText === "function" ? result.getText() : result.text;
+      if (value) return value;
+    } finally {
+      URL.revokeObjectURL(url);
+      try { reader.reset(); } catch (e) { /* ignore */ }
+    }
+  } catch (error) {
+    console.warn("ZXing image decode failed", error);
+  }
+
+  // 3) html5-qrcode scanFile fallback
+  try {
+    await loadScannerScript();
+    let holder = document.getElementById("photoScanTmp");
+    if (!holder) {
+      holder = document.createElement("div");
+      holder.id = "photoScanTmp";
+      holder.style.display = "none";
+      document.body.appendChild(holder);
+    }
+    const scanner = new Html5Qrcode("photoScanTmp", { verbose: false });
+    try {
+      const text = await scanner.scanFile(file, false);
+      if (text) return text;
+    } finally {
+      try { scanner.clear(); } catch (e) { /* ignore */ }
+    }
+  } catch (error) {
+    console.warn("html5-qrcode scanFile failed", error);
+  }
+
+  return null;
+}
+
+async function handlePhotoScan(file) {
+  if (!file) return;
+  els.answer.innerHTML = `<strong>사진에서 바코드를 읽는 중…</strong><p>잠시만 기다려주세요.</p>`;
+  try {
+    const value = await decodeImageFile(file);
+    if (!value) {
+      els.answer.innerHTML = `<strong>바코드를 못 읽었습니다</strong><p>바코드가 화면에 크고 또렷하게 보이도록 더 가까이서, 밝은 곳에서 다시 촬영해주세요. 손떨림이 있으면 인식이 어렵습니다.</p>`;
+      return;
+    }
+    els.isbnInput.value = value;
+    findAndShow(value);
+  } catch (error) {
+    console.error(error);
+    els.answer.innerHTML = `<strong>사진 인식 오류</strong><p>${escapeHtml(error?.message || String(error))}</p>`;
+  } finally {
+    els.photoInput.value = ""; // 같은 파일을 다시 선택할 수 있도록 초기화
+  }
 }
 
 function findAndShow(value) {
@@ -850,6 +934,8 @@ async function loadHostedStock() {
 }
 
 els.findButton.addEventListener("click", () => findAndShow(els.isbnInput.value));
+els.photoScanButton.addEventListener("click", () => els.photoInput.click());
+els.photoInput.addEventListener("change", () => handlePhotoScan(els.photoInput.files[0]));
 els.startCameraButton.addEventListener("click", () => startCamera().catch((error) => {
   console.warn("Camera start failed", error);
   // startCamera 내부에서 이미 alert를 띄웠으므로 여기서는 버튼 상태만 복구
