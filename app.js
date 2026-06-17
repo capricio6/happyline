@@ -137,11 +137,12 @@ const LOC_PAREN_RE = /\(\s*([A-Za-z가-힣][^()]*?)\s*\)/gu;
 //  - 공백/하이픈 제거
 //  - 6자리 코드(B423c3 등)는 뒤 2자리를 무시하고 앞 4자리만 사용
 function parseLocCode(rawToken) {
-  let t = String(rawToken || "").replace(/[\s-]/g, "");
-  if (t.length === 6) t = t.slice(0, 4); // 6자리 → 뒤 2자리 무시
+  const original = String(rawToken || "").replace(/[\s-]/g, ""); // 원래 표기(구분자만 제거)
+  let t = original;
+  if (t.length === 6) t = t.slice(0, 4); // 해석은 앞 4자리만 (원본 표기는 그대로 보존)
   const m = t.match(/^([A-Za-z]|[가-힣])([A-Za-z])?([0-9]{1,4})$/u);
   if (!m) return null;
-  return buildLocation(m[1], m[2], m[3]);
+  return buildLocation(m[1], m[2], m[3], original);
 }
 
 function normalizeTitle(title) {
@@ -159,65 +160,61 @@ function normalizeTitle(title) {
   return result.replace(/\s+/g, " ").trim();
 }
 
-// 세로줄 차례 표기. from은 방향 표현('왼쪽에서' 또는 '앞에서')
+// 차례 표기: 1→첫번째, 5→다섯번째 …
 const COL_ORDINALS = ["", "첫", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉", "열"];
-function colText(n, from) {
+function ordinal(n) {
   const word = COL_ORDINALS[Number(n)];
-  return word ? `${from} ${word}번째` : `${from} ${n}번째`;
+  return word ? `${word}번째` : `${n}번째`;
 }
-// 가로줄을 숫자로 쓴 경우 a,b,c… 문자로 변환 (1→a, 2→b …)
-function rowLetterFromDigit(d) {
-  const i = Number(d);
-  return (i >= 1 && i <= 26) ? String.fromCharCode(96 + i) : String(d);
+// 세로줄 차례 표기. from은 방향 표현('왼쪽에서' 또는 '앞에서부터')
+function colText(n, from) {
+  return `${from} ${ordinal(n)}`;
 }
 
 // 위치코드 구조: 창고동 / 가로줄(줄) / 세로줄 / 층
-//  - 가로줄: 소문자 문자(b) 또는 숫자 첫자리(1→a)로 표기
-//  - 가로줄 뒤 남은 숫자가 2자리면 [세로줄, 층] → '왼쪽에서 N번째'
-//  - 가로줄 뒤 남은 숫자가 1자리면 [층]만 → 세로줄은 한 줄뿐이므로 '앞에서부터 첫번째' 기본값
-//  예) Ab11 → A동 b줄 왼쪽에서 첫번째 1층 / A11 → A동 a줄 앞에서부터 첫번째 1층
-function buildLocation(buildingRaw, rowLetterRaw, digits) {
+//  - 가로줄(둘째 글자): 영문자면 'b줄', 숫자면 '다섯번째 줄'처럼 차례로 표기 (숫자→문자 변환 안 함)
+//  - 가로줄 뒤 남은 숫자가 2자리면 [세로줄, 층] → 세로줄은 '왼쪽에서 N번째'
+//  - 가로줄 뒤 남은 숫자가 1자리면 [층]만 → 세로줄은 한 줄뿐 → '앞에서부터 첫번째' 기본값
+//  예) Ab11 → A동 b줄 왼쪽에서 첫번째 1층 / B511 → B동 다섯번째 줄 왼쪽에서 첫번째 1층
+function buildLocation(buildingRaw, rowLetterRaw, digits, original) {
   const building = /[A-Za-z]/.test(buildingRaw) ? buildingRaw.toUpperCase() : buildingRaw;
   const rowLetter = rowLetterRaw ? rowLetterRaw.toLowerCase() : "";
-  const code = `${building}${rowLetter}${digits}`;
+  const code = original || `${building}${rowLetter}${digits}`; // 원래 표기 그대로 보존
 
-  // 가로줄 결정: 문자가 있으면 그 문자, 없으면 숫자 첫자리를 a,b,c…로 변환
-  let row;
-  let rest;
+  // 가로줄 라벨 결정: 영문자면 그 문자(b줄), 숫자면 차례(다섯번째 줄)
+  let rowLabel = "";
+  let rest = "";
   if (rowLetter) {
-    row = rowLetter;
+    rowLabel = `${rowLetter}줄`;
     rest = digits;
   } else if (digits.length >= 1) {
-    row = rowLetterFromDigit(digits[0]);
+    rowLabel = `${ordinal(digits[0])} 줄`;
     rest = digits.slice(1);
-  } else {
-    row = "";
-    rest = "";
   }
 
   // 남은 숫자 2자리 = 세로줄 + 층 (세로줄은 왼쪽에서 N번째)
-  if (row && rest.length === 2) {
+  if (rowLabel && rest.length === 2) {
     const [col, floor] = rest.split("");
     return {
       code,
       building,
-      row,
+      row: rowLabel,
       col,
       floor,
-      text: `${building}동 ${row}줄, ${colText(col)}, ${floor}층`,
+      text: `${building}동 ${rowLabel}, ${colText(col, "왼쪽에서")}, ${floor}층`,
     };
   }
 
   // 남은 숫자 1자리 = 층만 (세로줄 한 줄뿐 → 앞에서부터 첫번째 기본값)
-  if (row && rest.length === 1) {
+  if (rowLabel && rest.length === 1) {
     const floor = rest;
     return {
       code,
       building,
-      row,
+      row: rowLabel,
       col: "1",
       floor,
-      text: `${building}동 ${row}줄, 앞에서부터 첫번째, ${floor}층`,
+      text: `${building}동 ${rowLabel}, 앞에서부터 첫번째, ${floor}층`,
     };
   }
 
@@ -472,10 +469,12 @@ function showResult(row) {
   }
   const stock = row["창고재고"] === "" ? "재고 정보 없음" : `${row["창고재고"]}부`;
   const stockClass = row["재고구분"] === "위험" || row["재고구분"] === "0재고" ? "stock-risk" : "stock-safe";
+  const code = cleanCell(row["위치코드"]);
+  const codeTag = code ? `<strong>${escapeHtml(code)}</strong> · ` : "";
   els.answer.innerHTML = `
     <strong>${escapeHtml(row["도서명"])}</strong>
     <p class="publisher">${escapeHtml(row["출판사"])}</p>
-    <p>${escapeHtml(row["위치설명"])}</p>
+    <p>${codeTag}${escapeHtml(row["위치설명"])}</p>
     <p>ISBN ${escapeHtml(row["ISBN"])} · <span class="${stockClass}">${escapeHtml(stock)}</span></p>
   `;
 }
