@@ -128,23 +128,35 @@ function unifyBrackets(text) {
 // 위치코드 후보: (창고동 글자)(가로줄 문자, 선택) + 숫자
 //  - 창고동: 영문 1글자(대문자 규칙) 또는 한글 1글자
 //  - 가로줄: 소문자 영문 1글자(선택) — 없으면 숫자 첫자리가 가로줄
-//  - 괄호 안팎 공백, 글자-숫자 사이 공백/하이픈 허용
-const LOC_CODE_RE = /\(\s*([A-Za-z]|[가-힣])([A-Za-z])?\s*[-\s]?\s*([0-9]{1,4})\s*\)/gu;
-// 제목 끝에 붙은 위치코드 1개를 떼기 위한 패턴
-const LOC_CODE_TAIL_RE = /\s*\(\s*(?:[A-Za-z]|[가-힣])(?:[A-Za-z])?\s*[-\s]?\s*[0-9]{1,4}\s*\)\s*$/u;
+// 괄호 안 코드 후보를 느슨하게 캡처(첫 글자=영문/한글, 둘째 글자=영문/숫자).
+//  - (상),(부록),(2025) 같은 일반 괄호는 걸리지 않음
+//  - 내용 해석/검증은 parseLocCode에서 수행
+const LOC_PAREN_RE = /\(\s*([A-Za-z가-힣][^()]*?)\s*\)/gu;
+
+// 괄호 안 토큰 1개를 위치코드로 해석. 위치코드가 아니면 null
+//  - 공백/하이픈 제거
+//  - 6자리 코드(B423c3 등)는 뒤 2자리를 무시하고 앞 4자리만 사용
+function parseLocCode(rawToken) {
+  let t = String(rawToken || "").replace(/[\s-]/g, "");
+  if (t.length === 6) t = t.slice(0, 4); // 6자리 → 뒤 2자리 무시
+  const m = t.match(/^([A-Za-z]|[가-힣])([A-Za-z])?([0-9]{1,4})$/u);
+  if (!m) return null;
+  return buildLocation(m[1], m[2], m[3]);
+}
 
 function normalizeTitle(title) {
   const unified = unifyBrackets(cleanCell(title));
-  // 끝에 붙은 코드를 우선 제거, 없으면 제목 안의 마지막 코드 후보 1개를 제거
-  let stripped = unified.replace(LOC_CODE_TAIL_RE, "");
-  if (stripped === unified) {
-    const matches = [...unified.matchAll(LOC_CODE_RE)];
-    if (matches.length) {
-      const last = matches[matches.length - 1];
-      stripped = unified.slice(0, last.index) + unified.slice(last.index + last[0].length);
+  const cands = [...unified.matchAll(LOC_PAREN_RE)];
+  let result = unified;
+  // 위치코드로 해석되는 마지막 괄호 그룹만 제거 (일반 괄호 표기는 보존)
+  for (let i = cands.length - 1; i >= 0; i -= 1) {
+    if (parseLocCode(cands[i][1])) {
+      const m = cands[i];
+      result = unified.slice(0, m.index) + unified.slice(m.index + m[0].length);
+      break;
     }
   }
-  return stripped.replace(/\s+/g, " ").trim();
+  return result.replace(/\s+/g, " ").trim();
 }
 
 // 세로줄 차례 표기. from은 방향 표현('왼쪽에서' 또는 '앞에서')
@@ -222,20 +234,17 @@ function buildLocation(buildingRaw, rowLetterRaw, digits) {
 
 function extractLocation(title) {
   const raw = unifyBrackets(cleanCell(title));
-  const candidates = [...raw.matchAll(LOC_CODE_RE)];
-  if (!candidates.length) {
-    return { code: "", building: "", line: "", position: "", floor: "", text: "위치 정보가 없습니다." };
+  const candidates = [...raw.matchAll(LOC_PAREN_RE)];
+  // 뒤에서부터 위치코드로 해석 가능한 첫 후보를 채택
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const loc = parseLocCode(candidates[i][1]);
+    if (loc) return loc;
   }
-  // 제목 안에 여러 개면 가장 마지막(보통 끝에 붙은 것)을 위치코드로 채택
-  const last = candidates[candidates.length - 1];
-  return buildLocation(last[1], last[2], last[3]);
+  return { code: "", building: "", row: "", col: "", floor: "", text: "위치 정보가 없습니다." };
 }
 
 function locationFromCode(code) {
-  const match = unifyBrackets(cleanCell(code))
-    .match(/^\s*([A-Za-z]|[가-힣])([A-Za-z])?\s*[-\s]?\s*([0-9]{1,4})\s*$/u);
-  if (!match) return null;
-  return buildLocation(match[1], match[2], match[3]);
+  return parseLocCode(unifyBrackets(cleanCell(code)));
 }
 
 function normalizeRowLocation(row) {
