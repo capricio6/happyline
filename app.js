@@ -166,33 +166,37 @@ function ordinal(n) {
   const word = COL_ORDINALS[Number(n)];
   return word ? `${word}번째` : `${n}번째`;
 }
-// 세로줄 차례 표기. from은 방향 표현('왼쪽에서' 또는 '앞에서부터')
+// 세로줄 차례 표기. from이 있으면 방향어를 앞에 붙이고, 없으면 차례만
 function colText(n, from) {
-  return `${from} ${ordinal(n)}`;
+  return from ? `${from} ${ordinal(n)}` : ordinal(n);
 }
 
 // 위치코드 구조: 창고동 / 가로줄(줄) / 세로줄 / 층
 //  - 가로줄(둘째 글자): 영문자면 'b줄', 숫자면 '다섯번째 줄'처럼 차례로 표기 (숫자→문자 변환 안 함)
-//  - 가로줄 뒤 남은 숫자가 2자리면 [세로줄, 층] → 세로줄은 '왼쪽에서 N번째'
-//  - 가로줄 뒤 남은 숫자가 1자리면 [층]만 → 세로줄은 한 줄뿐 → '앞에서부터 첫번째' 기본값
-//  예) Ab11 → A동 b줄 왼쪽에서 첫번째 1층 / B511 → B동 다섯번째 줄 왼쪽에서 첫번째 1층
+//  - 세로줄 방향어: 둘째 글자가 영문자면 '왼쪽에서부터 N번째', 숫자면 방향어 없이 'N번째'
+//  - 가로줄 뒤 남은 숫자가 2자리면 [세로줄, 층], 1자리면 [층]만(세로줄=첫번째 기본값)
+//  예) Ab11 → A동 b줄 왼쪽에서부터 첫번째 1층 / B511 → B동 다섯번째 줄 첫번째 1층
 function buildLocation(buildingRaw, rowLetterRaw, digits, original) {
   const building = /[A-Za-z]/.test(buildingRaw) ? buildingRaw.toUpperCase() : buildingRaw;
   const rowLetter = rowLetterRaw ? rowLetterRaw.toLowerCase() : "";
   const code = original || `${building}${rowLetter}${digits}`; // 원래 표기 그대로 보존
 
   // 가로줄 라벨 결정: 영문자면 그 문자(b줄), 숫자면 차례(다섯번째 줄)
+  // 세로줄 방향어: 영문자행이면 '왼쪽에서부터', 숫자행이면 없음
   let rowLabel = "";
   let rest = "";
+  let dir = "";
   if (rowLetter) {
     rowLabel = `${rowLetter}줄`;
     rest = digits;
+    dir = "왼쪽에서부터";
   } else if (digits.length >= 1) {
     rowLabel = `${ordinal(digits[0])} 줄`;
     rest = digits.slice(1);
+    dir = "";
   }
 
-  // 남은 숫자 2자리 = 세로줄 + 층 (세로줄은 왼쪽에서 N번째)
+  // 남은 숫자 2자리 = 세로줄 + 층
   if (rowLabel && rest.length === 2) {
     const [col, floor] = rest.split("");
     return {
@@ -201,11 +205,11 @@ function buildLocation(buildingRaw, rowLetterRaw, digits, original) {
       row: rowLabel,
       col,
       floor,
-      text: `${building}동 ${rowLabel}, ${colText(col, "왼쪽에서")}, ${floor}층`,
+      text: `${building}동 ${rowLabel}, ${colText(col, dir)}, ${floor}층`,
     };
   }
 
-  // 남은 숫자 1자리 = 층만 (세로줄 한 줄뿐 → 앞에서부터 첫번째 기본값)
+  // 남은 숫자 1자리 = 층만 (세로줄 한 줄뿐 → 첫번째 기본값)
   if (rowLabel && rest.length === 1) {
     const floor = rest;
     return {
@@ -214,7 +218,7 @@ function buildLocation(buildingRaw, rowLetterRaw, digits, original) {
       row: rowLabel,
       col: "1",
       floor,
-      text: `${building}동 ${rowLabel}, 앞에서부터 첫번째, ${floor}층`,
+      text: `${building}동 ${rowLabel}, ${colText("1", dir)}, ${floor}층`,
     };
   }
 
