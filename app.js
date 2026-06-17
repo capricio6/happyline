@@ -1,5 +1,3 @@
-const APP_VERSION = "2.0.6";
-
 const state = {
   masterRows: [],
   stockRows: [],
@@ -29,7 +27,6 @@ const els = {
   cameraBox: document.querySelector("#cameraBox"),
   video: document.querySelector("#video"),
   html5Reader: document.querySelector("#html5Reader"),
-  scanStatus: document.querySelector("#scanStatus"),
   answer: document.querySelector("#answer"),
   riskBody: document.querySelector("#riskBody"),
   zeroBody: document.querySelector("#zeroBody"),
@@ -119,36 +116,124 @@ function cleanCell(value) {
   return String(value ?? "").replace(/\uFEFF/g, "").trim();
 }
 
+// 전각 괄호·대괄호류를 ASCII 소괄호로 통일 (한글 IME 입력 대응)
+function unifyBrackets(text) {
+  return String(text ?? "")
+    .replace(/[（〔【［]/g, "(")
+    .replace(/[）〕】］]/g, ")");
+}
+
+// 위치코드 후보: (창고동 글자)(가로줄 문자, 선택) + 숫자
+//  - 창고동: 영문 1글자(대문자 규칙) 또는 한글 1글자
+//  - 가로줄: 소문자 영문 1글자(선택) — 없으면 숫자 첫자리가 가로줄
+//  - 괄호 안팎 공백, 글자-숫자 사이 공백/하이픈 허용
+const LOC_CODE_RE = /\(\s*([A-Za-z]|[가-힣])([A-Za-z])?\s*[-\s]?\s*([0-9]{1,4})\s*\)/gu;
+// 제목 끝에 붙은 위치코드 1개를 떼기 위한 패턴
+const LOC_CODE_TAIL_RE = /\s*\(\s*(?:[A-Za-z]|[가-힣])(?:[A-Za-z])?\s*[-\s]?\s*[0-9]{1,4}\s*\)\s*$/u;
+
 function normalizeTitle(title) {
-  return cleanCell(title)
-    .replace(/\s*\(([A-Za-z][0-9]{3})\)\s*$/u, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const unified = unifyBrackets(cleanCell(title));
+  // 끝에 붙은 코드를 우선 제거, 없으면 제목 안의 마지막 코드 후보 1개를 제거
+  let stripped = unified.replace(LOC_CODE_TAIL_RE, "");
+  if (stripped === unified) {
+    const matches = [...unified.matchAll(LOC_CODE_RE)];
+    if (matches.length) {
+      const last = matches[matches.length - 1];
+      stripped = unified.slice(0, last.index) + unified.slice(last.index + last[0].length);
+    }
+  }
+  return stripped.replace(/\s+/g, " ").trim();
+}
+
+// 세로줄 차례 표기. from은 방향 표현('왼쪽에서' 또는 '앞에서')
+const COL_ORDINALS = ["", "첫", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉", "열"];
+function colText(n, from) {
+  const word = COL_ORDINALS[Number(n)];
+  return word ? `${from} ${word}번째` : `${from} ${n}번째`;
+}
+// 가로줄을 숫자로 쓴 경우 a,b,c… 문자로 변환 (1→a, 2→b …)
+function rowLetterFromDigit(d) {
+  const i = Number(d);
+  return (i >= 1 && i <= 26) ? String.fromCharCode(96 + i) : String(d);
+}
+
+// 위치코드 구조: 창고동 / 가로줄(줄) / 세로줄 / 층
+//  - 가로줄: 소문자 문자(b) 또는 숫자 첫자리(1→a)로 표기
+//  - 가로줄 뒤 남은 숫자가 2자리면 [세로줄, 층] → '왼쪽에서 N번째'
+//  - 가로줄 뒤 남은 숫자가 1자리면 [층]만 → 세로줄은 한 줄뿐이므로 '앞에서부터 첫번째' 기본값
+//  예) Ab11 → A동 b줄 왼쪽에서 첫번째 1층 / A11 → A동 a줄 앞에서부터 첫번째 1층
+function buildLocation(buildingRaw, rowLetterRaw, digits) {
+  const building = /[A-Za-z]/.test(buildingRaw) ? buildingRaw.toUpperCase() : buildingRaw;
+  const rowLetter = rowLetterRaw ? rowLetterRaw.toLowerCase() : "";
+  const code = `${building}${rowLetter}${digits}`;
+
+  // 가로줄 결정: 문자가 있으면 그 문자, 없으면 숫자 첫자리를 a,b,c…로 변환
+  let row;
+  let rest;
+  if (rowLetter) {
+    row = rowLetter;
+    rest = digits;
+  } else if (digits.length >= 1) {
+    row = rowLetterFromDigit(digits[0]);
+    rest = digits.slice(1);
+  } else {
+    row = "";
+    rest = "";
+  }
+
+  // 남은 숫자 2자리 = 세로줄 + 층 (세로줄은 왼쪽에서 N번째)
+  if (row && rest.length === 2) {
+    const [col, floor] = rest.split("");
+    return {
+      code,
+      building,
+      row,
+      col,
+      floor,
+      text: `${building}동 ${row}줄, ${colText(col)}, ${floor}층`,
+    };
+  }
+
+  // 남은 숫자 1자리 = 층만 (세로줄 한 줄뿐 → 앞에서부터 첫번째 기본값)
+  if (row && rest.length === 1) {
+    const floor = rest;
+    return {
+      code,
+      building,
+      row,
+      col: "1",
+      floor,
+      text: `${building}동 ${row}줄, 앞에서부터 첫번째, ${floor}층`,
+    };
+  }
+
+  // 규칙에서 벗어난 자릿수: 코드는 그대로 보존하고 일반 표기 (누락 방지)
+  return {
+    code,
+    building,
+    row: rowLetter,
+    col: "",
+    floor: "",
+    text: `${building}동 ${rowLetter}${digits} (위치코드)`,
+  };
 }
 
 function extractLocation(title) {
-  const match = cleanCell(title).match(/\(([A-Za-z])([0-9])([0-9])([0-9])\)\s*$/u);
-  if (!match) return { code: "", building: "", line: "", position: "", floor: "", text: "위치 정보가 없습니다." };
-
-  const [, building, line, position, floor] = match;
-  return {
-    code: `${building.toUpperCase()}${line}${position}${floor}`,
-    building: building.toUpperCase(),
-    line,
-    position,
-    floor,
-    text: `${building.toUpperCase()}동 ${line}번 라인, 앞에서 ${position}번째, ${floor}층`,
-  };
+  const raw = unifyBrackets(cleanCell(title));
+  const candidates = [...raw.matchAll(LOC_CODE_RE)];
+  if (!candidates.length) {
+    return { code: "", building: "", line: "", position: "", floor: "", text: "위치 정보가 없습니다." };
+  }
+  // 제목 안에 여러 개면 가장 마지막(보통 끝에 붙은 것)을 위치코드로 채택
+  const last = candidates[candidates.length - 1];
+  return buildLocation(last[1], last[2], last[3]);
 }
 
 function locationFromCode(code) {
-  const match = cleanCell(code).match(/^([A-Za-z])([0-9])([0-9])([0-9])$/u);
+  const match = unifyBrackets(cleanCell(code))
+    .match(/^\s*([A-Za-z]|[가-힣])([A-Za-z])?\s*[-\s]?\s*([0-9]{1,4})\s*$/u);
   if (!match) return null;
-  const [, building, line, position, floor] = match;
-  return {
-    code: `${building.toUpperCase()}${line}${position}${floor}`,
-    text: `${building.toUpperCase()}동 ${line}번 라인, 앞에서 ${position}번째, ${floor}층`,
-  };
+  return buildLocation(match[1], match[2], match[3]);
 }
 
 function normalizeRowLocation(row) {
@@ -384,175 +469,111 @@ function showResult(row) {
   `;
 }
 
-function setScanStatus(msg, type) {
-  if (!els.scanStatus) return;
-  els.scanStatus.hidden = false;
-  els.scanStatus.textContent = msg;
-  els.scanStatus.className = "scan-status" + (type ? " " + type : "");
-}
-
-function clearScanStatus() {
-  if (!els.scanStatus) return;
-  els.scanStatus.hidden = true;
-  els.scanStatus.textContent = "";
-  els.scanStatus.className = "scan-status";
-}
-
-function onScanned(value) {
-  els.isbnInput.value = value;
-  setScanStatus(`인식됨: ${value}`, "ok");
-  findAndShow(value);
-  stopCamera(true);
-}
-
-function handleCameraError(error) {
-  const name = (error && error.name) || "";
-  let msg;
-  if (name === "NotAllowedError" || name === "SecurityError") {
-    msg = "카메라 권한이 거부됨. iPhone: 설정 > Safari > 카메라 > '허용' 후 새로고침. (인앱 브라우저면 Safari로 여세요)";
-  } else if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") {
-    msg = "후면 카메라를 찾지 못했습니다.";
-  } else if (name === "NotReadableError" || name === "TrackStartError") {
-    msg = "다른 앱이 카메라를 사용 중입니다. 그 앱을 닫고 다시 시도해주세요.";
-  } else {
-    msg = `카메라 오류: ${(error && (error.message || name)) || error}`;
-  }
-  setScanStatus(msg, "error");
-  els.startCameraButton.disabled = false;
-  els.stopCameraButton.disabled = true;
-}
-
 async function startCamera() {
-  clearScanStatus();
-
+  // 1) 카메라 권한 사전 확인 (iOS에서 명확한 에러 메시지 출력)
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setScanStatus("이 브라우저는 카메라를 지원하지 않습니다. HTTPS 주소인지, iPhone은 Safari로 열었는지 확인하세요.", "error");
+    alert("이 브라우저는 카메라를 지원하지 않습니다.\n\n[해결]\n- HTTPS 주소(https://...)인지 확인\n- iPhone: Safari로 열기 (Chrome/Naver/Kakao 인앱 X)\n- Android: 최신 Chrome 사용");
     throw new Error("getUserMedia unsupported");
   }
 
-  // 1) 카메라를 '딱 한 번'만 연다 (프로브 없음 → iOS 카메라 잠김/제스처 소실 방지)
-  setScanStatus("카메라 여는 중…");
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: false,
-    });
-  } catch (error) {
-    console.warn("getUserMedia failed", error);
-    handleCameraError(error);
-    throw error;
-  }
-  state.mediaStream = stream;
-
-  // 2) 영상 화면에 연결
-  els.html5Reader.style.display = "none";
-  els.video.style.display = "block";
-  els.cameraBox.style.display = "block";
-  els.video.setAttribute("playsinline", "true");
-  els.video.setAttribute("autoplay", "true");
-  els.video.muted = true;
-  els.video.srcObject = stream;
-  els.startCameraButton.disabled = true;
-  els.stopCameraButton.disabled = false;
-  try {
-    await els.video.play();
-  } catch (error) {
-    console.warn("video.play() warning", error);
+  // iOS 홈화면(standalone) PWA에서는 getUserMedia가 막히는 WebKit 버그가 있어 사전 경고
+  if (isIOS() && isStandalone()) {
+    alert("아이폰 '홈 화면에 추가'(앱) 상태에서는 iOS 정책상 카메라가 동작하지 않을 수 있습니다.\n\n스캔이 안 되면 이 페이지를 Safari 브라우저로 직접 열어주세요.\n(Safari 주소창에 배포 주소 입력 → 카메라 허용)");
   }
 
-  // 3) 디코더 선택: BarcodeDetector(네이티브) → ZXing(같은 영상 재사용)
-  if ("BarcodeDetector" in window) {
+  // iOS는 카메라를 두 번 여닫으면 NotReadableError가 잦으므로 probe를 생략하고
+  // 스캐너가 카메라를 단 한 번만 열도록 한다 (html5-qrcode 알려진 이슈 회피).
+  if (isIOS()) {
     try {
-      const supported = await window.BarcodeDetector.getSupportedFormats();
-      if (supported.includes("ean_13")) {
-        setScanStatus("바코드를 화면 중앙에 비춰주세요", "ok");
-        const detector = new window.BarcodeDetector({
-          formats: ["ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e"],
-        });
-        runDetectorLoop(detector);
-        return;
-      }
+      await startHtml5Scanner();
+      return;
     } catch (error) {
-      console.warn("BarcodeDetector unavailable, fallback to ZXing", error);
+      console.warn("Html5Qrcode failed on iOS, fallback to ZXing", error);
+    }
+    try {
+      await startZxingScanner();
+      return;
+    } catch (error) {
+      const denied = error && (error.name === "NotAllowedError" || /denied|permission/i.test(error.message || ""));
+      alert(denied
+        ? "카메라 권한이 거부되었습니다.\n\n[iPhone]\n설정 > Safari > 카메라 > '허용'\n그 다음 Safari를 새로고침하세요.\n홈 화면 앱이면 Safari로 직접 열어주세요."
+        : `스캐너 초기화 실패: ${error?.message || error}\n\nSafari로 열었는지, HTTPS 주소인지, 네트워크가 정상인지 확인해주세요.`);
+      throw error;
     }
   }
 
-  setScanStatus("스캐너 로딩 중…");
+  // Android/PC는 기존대로 권한을 먼저 확인해 명확한 메시지를 제공한다.
   try {
-    await loadZxingScript();
+    const probeStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false,
+    });
+    probeStream.getTracks().forEach((track) => track.stop());
   } catch (error) {
-    setScanStatus("스캐너 로딩 실패. 인터넷 연결을 확인하고 다시 시도해주세요.", "error");
-    stopCamera();
+    const msg = error && error.name === "NotAllowedError"
+      ? "카메라 권한이 거부되었습니다.\n\n주소창 옆 자물쇠 > 사이트 설정 > 카메라 허용으로 바꾼 뒤 새로고침해주세요."
+      : `카메라를 열 수 없습니다: ${error?.message || error}\n\nHTTPS 주소인지, 다른 앱이 카메라를 점유 중인지 확인해주세요.`;
+    alert(msg);
     throw error;
   }
-  setScanStatus("바코드를 화면 중앙에 비춰주세요", "ok");
-  startZxingOnVideo();
+
+  // Android/PC: BarcodeDetector 네이티브 우선 (가장 빠름)
+  if ("BarcodeDetector" in window) {
+    try {
+      await startNativeBarcodeDetector();
+      return;
+    } catch (error) {
+      console.warn("Native BarcodeDetector failed, fallback to Html5Qrcode", error);
+    }
+  }
+
+  // 최후 fallback
+  try {
+    await startHtml5Scanner();
+  } catch (error) {
+    console.warn("Html5Qrcode failed, fallback to ZXing", error);
+    await startZxingScanner();
+  }
 }
 
-function runDetectorLoop(detector) {
+async function startNativeBarcodeDetector() {
+  const detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128", "code_39"] });
+  state.mediaStream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: "environment" } },
+    audio: false,
+  });
+  els.video.style.display = "block";
+  els.html5Reader.style.display = "none";
+  els.video.srcObject = state.mediaStream;
+  els.video.setAttribute("playsinline", "true");
+  els.video.setAttribute("muted", "true");
+  await els.video.play().catch(() => undefined);
+  els.cameraBox.style.display = "block";
+  els.startCameraButton.disabled = true;
+  els.stopCameraButton.disabled = false;
+
   const scan = async () => {
     if (!state.mediaStream) return;
     try {
       const codes = await detector.detect(els.video);
-      if (codes && codes.length) {
-        onScanned(codes[0].rawValue);
+      if (codes.length) {
+        const value = codes[0].rawValue;
+        els.isbnInput.value = value;
+        findAndShow(value);
+        stopCamera();
         return;
       }
     } catch (error) {
-      // 일시적 오류는 무시하고 계속 스캔
+      console.warn(error);
     }
     state.barcodeLoop = window.requestAnimationFrame(scan);
   };
   state.barcodeLoop = window.requestAnimationFrame(scan);
 }
 
-function startZxingOnVideo() {
-  let hints = null;
-  if (window.ZXing && window.ZXing.DecodeHintType && window.ZXing.BarcodeFormat) {
-    hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.EAN_13,
-      ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.UPC_A,
-    ]);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-  }
-  state.zxingReader = new ZXing.BrowserMultiFormatReader(hints, 200);
-
-  const onDecode = (result) => {
-    if (!result) return;
-    const value = typeof result.getText === "function" ? result.getText() : result.text;
-    if (value) onScanned(value);
-  };
-
-  // 이미 재생 중인 video를 디코딩 → 카메라를 다시 열지 않음 (iOS 안정성 핵심)
-  if (typeof state.zxingReader.decodeFromVideoElement === "function") {
-    state.zxingReader.decodeFromVideoElement(els.video, onDecode);
-  } else if (typeof state.zxingReader.decodeFromStream === "function") {
-    state.zxingReader.decodeFromStream(state.mediaStream, els.video, onDecode);
-  } else {
-    state.zxingReader.decodeFromVideoDevice(undefined, els.video, onDecode);
-  }
-}
-
-function stopCamera(keepStatus) {
+function stopCamera() {
   if (state.barcodeLoop) window.cancelAnimationFrame(state.barcodeLoop);
   state.barcodeLoop = null;
-  if (state.zxingReader) {
-    try {
-      state.zxingReader.reset();
-    } catch (error) {
-      console.warn(error);
-    }
-    state.zxingReader = null;
-  }
-  if (state.html5Scanner) {
-    state.html5Scanner.stop().catch(() => undefined).finally(() => {
-      try { state.html5Scanner && state.html5Scanner.clear(); } catch (e) { /* ignore */ }
-      state.html5Scanner = null;
-    });
-  }
   if (state.mediaStream) {
     state.mediaStream.getTracks().forEach((track) => track.stop());
   }
@@ -561,15 +582,33 @@ function stopCamera(keepStatus) {
     try { els.video.pause(); } catch (e) { /* ignore */ }
     els.video.srcObject = null;
   }
+  if (state.html5Scanner) {
+    state.html5Scanner.stop().catch(() => undefined).finally(() => {
+      try { state.html5Scanner && state.html5Scanner.clear(); } catch (e) { /* ignore */ }
+      state.html5Scanner = null;
+    });
+  }
+  if (state.zxingReader) {
+    try {
+      state.zxingReader.reset();
+    } catch (error) {
+      console.warn(error);
+    }
+    state.zxingReader = null;
+  }
   els.cameraBox.style.display = "none";
   els.startCameraButton.disabled = false;
   els.stopCameraButton.disabled = true;
-  if (!keepStatus) clearScanStatus();
 }
 
 function isIOS() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent)
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function isStandalone() {
+  return window.navigator.standalone === true
+    || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
 }
 
 function loadScript(src) {
@@ -588,6 +627,27 @@ function loadScript(src) {
     script.onerror = reject;
     document.head.appendChild(script);
   });
+}
+
+async function loadScannerScript() {
+  if (window.Html5Qrcode) return;
+  // 안정 버전 고정 + 다중 CDN fallback (CDN 장애 시에도 동작)
+  const sources = [
+    "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js",
+    "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js",
+    "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
+    "https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
+  ];
+
+  for (const src of sources) {
+    try {
+      await loadScript(src);
+      if (window.Html5Qrcode) return;
+    } catch (error) {
+      console.warn("Scanner script failed", src, error);
+    }
+  }
+  throw new Error("scanner script unavailable");
 }
 
 async function loadZxingScript() {
@@ -610,6 +670,134 @@ async function loadZxingScript() {
   throw new Error("ZXing unavailable");
 }
 
+async function startHtml5Scanner() {
+  try {
+    await loadScannerScript();
+  } catch (error) {
+    throw new Error("스캐너 라이브러리 로드 실패. 인터넷 연결을 확인해주세요.");
+  }
+
+  if (!window.Html5Qrcode) {
+    throw new Error("스캐너 모듈을 사용할 수 없습니다.");
+  }
+
+  els.video.style.display = "none";
+  els.html5Reader.style.display = "block";
+  els.cameraBox.style.display = "block";
+  els.startCameraButton.disabled = true;
+  els.stopCameraButton.disabled = false;
+
+  const formats = window.Html5QrcodeSupportedFormats
+    ? [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+      ]
+    : undefined;
+  state.html5Scanner = new Html5Qrcode("html5Reader", { verbose: false });
+
+  const onScan = (decodedText) => {
+    els.isbnInput.value = decodedText;
+    findAndShow(decodedText);
+    stopCamera();
+  };
+
+  // iOS Safari에서는 후면 카메라 자동 감지가 불안정 → facingMode 우선 사용
+  const config = {
+    fps: 10,
+    qrbox: { width: 280, height: 160 }, // ISBN 바코드는 가로로 길어 직사각형이 유리
+    aspectRatio: window.innerWidth > window.innerHeight ? 1.7777 : 1.0,
+    disableFlip: false,
+    formatsToSupport: formats,
+    videoConstraints: {
+      facingMode: { ideal: "environment" },
+    },
+  };
+
+  try {
+    // 가장 호환성 높은 방법: facingMode로 시작
+    await state.html5Scanner.start(
+      { facingMode: { ideal: "environment" } },
+      config,
+      onScan,
+      () => undefined,
+    );
+  } catch (error) {
+    console.warn("facingMode start failed, trying device enumeration", error);
+    // facingMode 실패 시 카메라 ID로 재시도
+    const cameras = await Html5Qrcode.getCameras().catch(() => []);
+    if (!cameras.length) {
+      throw new Error("사용 가능한 카메라가 없습니다.");
+    }
+    const backCamera = cameras.find((camera) => /back|rear|environment|후면/i.test(camera.label)) || cameras[cameras.length - 1];
+    await state.html5Scanner.start(backCamera.id, config, onScan, () => undefined);
+  }
+}
+
+async function startZxingScanner() {
+  try {
+    await loadZxingScript();
+  } catch (error) {
+    throw new Error("ZXing 라이브러리 로드 실패. 네트워크를 확인해주세요.");
+  }
+
+  els.video.style.display = "block";
+  els.html5Reader.style.display = "none";
+  els.cameraBox.style.display = "block";
+  els.startCameraButton.disabled = true;
+  els.stopCameraButton.disabled = false;
+
+  // iOS 필수 속성 보장
+  els.video.setAttribute("playsinline", "true");
+  els.video.setAttribute("muted", "true");
+  els.video.setAttribute("autoplay", "true");
+
+  // hints로 EAN_13(ISBN) 우선 인식 → 인식 속도 향상
+  let hints = null;
+  if (window.ZXing?.DecodeHintType && window.ZXing?.BarcodeFormat) {
+    hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  }
+  state.zxingReader = new ZXing.BrowserMultiFormatReader(hints, 500);
+
+  const onDecode = (result, error) => {
+    if (!result) return;
+    const value = typeof result.getText === "function" ? result.getText() : result.text;
+    if (!value) return;
+    els.isbnInput.value = value;
+    findAndShow(value);
+    stopCamera();
+  };
+
+  if (typeof state.zxingReader.decodeFromConstraints === "function") {
+    await state.zxingReader.decodeFromConstraints(
+      {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      },
+      els.video,
+      onDecode,
+    );
+    return;
+  }
+
+  await state.zxingReader.decodeFromVideoDevice(undefined, els.video, onDecode);
+}
 
 function findAndShow(value) {
   const row = lookup(value);
@@ -696,19 +884,40 @@ els.riskBody.addEventListener("change", (event) => {
   renderDashboard();
 });
 
-// 조회 트리거 정리
-// - 카메라 스캔: 스캔 즉시 onScan/onDecode 콜백에서 findAndShow 자동 호출 (아래 핸들러와 무관)
-// - 키보드형 바코드 스캐너: 13자리 + Enter 자동 송신 → 아래 Enter 핸들러가 처리
-// - 손 입력: Enter 키 또는 "조회" 버튼으로 처리
-// input 이벤트 자동 조회는 손 입력 도중 텍스트를 덮어쓰는 문제가 있어 제거함.
 els.isbnInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
-    event.preventDefault();
     findAndShow(els.isbnInput.value);
-    // select()를 호출하지 않음: 손 입력 중 텍스트가 선택 상태로 남아
-    // 다음 글자 입력 시 통째로 덮어쓰이는 문제를 방지.
-    // 다음 스캔 시에는 카메라/스캐너가 값을 통째로 덮어쓰므로 문제 없음.
+    els.isbnInput.select();
   }
+});
+
+// 자동 Enter 처리: ISBN이 "완성"된 형태일 때만 자동 조회
+// - ISBN-13: 13자리 숫자 (한국 도서 표준)
+// - ISBN-10: 10자리 숫자 또는 9자리 + X (구형, 안전망)
+// 미완성(예: 9자리)에서는 절대 자동 발동하지 않음
+// 키보드형 스캐너(USB/Bluetooth)는 거의 모두 Enter를 자동 송신하므로 별도 휴리스틱 불필요
+let autoSubmitTimer = null;
+els.isbnInput.addEventListener("input", () => {
+  const raw = els.isbnInput.value.trim();
+  const cleaned = raw.replace(/[^0-9Xx]/g, "");
+
+  const isComplete = /^[0-9]{13}$/.test(cleaned)
+    || /^[0-9]{10}$/.test(cleaned)
+    || /^[0-9]{9}[Xx]$/.test(cleaned);
+
+  if (autoSubmitTimer) clearTimeout(autoSubmitTimer);
+  if (!isComplete) return;
+
+  // 200ms 디바운스 + 값 안정성 재확인: 그 사이 추가 입력이 있으면 취소되어
+  // 13자리를 넘는 추가 입력(예: 14, 15자리)에서 잘못 발동하지 않음
+  const snapshot = cleaned;
+  autoSubmitTimer = setTimeout(() => {
+    const current = els.isbnInput.value.trim().replace(/[^0-9Xx]/g, "");
+    if (current === snapshot) {
+      findAndShow(snapshot);
+      els.isbnInput.select();
+    }
+  }, 200);
 });
 
 window.addEventListener("beforeinstallprompt", (event) => {
@@ -739,7 +948,6 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
 }
 
 window.addEventListener("load", loadHostedStock);
-console.log(`%cISBN 재고 위치 조회 v${APP_VERSION}`, "color:#176b87;font-weight:700;font-size:13px");
 
 function riskExcludedSet() {
   try {
