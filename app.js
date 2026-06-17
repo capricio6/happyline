@@ -652,6 +652,23 @@ async function loadScannerScript() {
   throw new Error("scanner script unavailable");
 }
 
+async function loadTesseractScript() {
+  if (window.Tesseract) return;
+  const sources = [
+    "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js",
+    "https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js",
+  ];
+  for (const src of sources) {
+    try {
+      await loadScript(src);
+      if (window.Tesseract) return;
+    } catch (error) {
+      console.warn("Tesseract script failed", src, error);
+    }
+  }
+  throw new Error("Tesseract unavailable");
+}
+
 async function loadZxingScript() {
   if (window.ZXing?.BrowserMultiFormatReader) return;
   // 안정 버전 고정 (0.21.3은 검증된 안정 버전)
@@ -805,6 +822,47 @@ function buildZxingHints() {
   return hints;
 }
 
+// EAN-13(ISBN-13) 체크섬 검증 → OCR 오인식을 걸러냄
+function isValidEan13(s) {
+  if (!/^[0-9]{13}$/.test(s)) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) {
+    sum += Number(s[i]) * (i % 2 === 0 ? 1 : 3);
+  }
+  return (10 - (sum % 10)) % 10 === Number(s[12]);
+}
+
+// OCR로 읽은 텍스트에서 유효한 13자리 ISBN을 찾음 (978/979 우선)
+function findIsbnFromText(text) {
+  const digits = String(text || "").replace(/[^0-9]/g, "");
+  for (const prefix of ["978", "979"]) {
+    let idx = digits.indexOf(prefix);
+    while (idx !== -1) {
+      const cand = digits.slice(idx, idx + 13);
+      if (cand.length === 13 && isValidEan13(cand)) return cand;
+      idx = digits.indexOf(prefix, idx + 1);
+    }
+  }
+  for (let i = 0; i + 13 <= digits.length; i += 1) {
+    const cand = digits.slice(i, i + 13);
+    if (isValidEan13(cand)) return cand;
+  }
+  return null;
+}
+
+// 바코드 아래 숫자를 OCR로 읽기 (아이폰에서 바코드 디코딩이 실패할 때의 최후 수단)
+async function ocrDecodeImage(file) {
+  await loadTesseractScript();
+  const worker = await Tesseract.createWorker("eng");
+  try {
+    await worker.setParameters({ tessedit_char_whitelist: "0123456789" });
+    const { data } = await worker.recognize(file);
+    return findIsbnFromText(data && data.text);
+  } finally {
+    try { await worker.terminate(); } catch (e) { /* ignore */ }
+  }
+}
+
 // 정지 사진 1장에서 바코드를 디코딩 (iOS에서 가장 안정적인 경로)
 // 우선순위: 네이티브 BarcodeDetector(안드로이드) → ZXing → html5-qrcode scanFile
 async function decodeImageFile(file) {
@@ -859,6 +917,15 @@ async function decodeImageFile(file) {
     }
   } catch (error) {
     console.warn("html5-qrcode scanFile failed", error);
+  }
+
+  // 4) OCR: 바코드 아래 숫자 읽기 (최후 수단, 아이폰에서 특히 유용)
+  try {
+    els.answer.innerHTML = `<strong>바코드 숫자를 읽는 중…</strong><p>처음 한 번은 인식 엔진을 내려받느라 시간이 걸릴 수 있습니다. 잠시만 기다려주세요.</p>`;
+    const isbn = await ocrDecodeImage(file);
+    if (isbn) return isbn;
+  } catch (error) {
+    console.warn("OCR decode failed", error);
   }
 
   return null;
