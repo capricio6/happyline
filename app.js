@@ -34,6 +34,7 @@ const els = {
   zeroBody: document.querySelector("#zeroBody"),
   downloadRiskButton: document.querySelector("#downloadRiskButton"),
   downloadZeroButton: document.querySelector("#downloadZeroButton"),
+  downloadNoLocationButton: document.querySelector("#downloadNoLocationButton"),
   showAllRiskButton: document.querySelector("#showAllRiskButton"),
   selectedRiskOnly: document.querySelector("#selectedRiskOnly"),
   totalCount: document.querySelector("#totalCount"),
@@ -428,6 +429,7 @@ function renderDashboard() {
 
   els.downloadRiskButton.disabled = selectedRiskRows.length === 0;
   els.downloadZeroButton.disabled = zeroRows.length === 0;
+  els.downloadNoLocationButton.disabled = noLocationRows.length === 0;
 }
 
 function renderStockRows(body, rows, options = {}) {
@@ -1030,6 +1032,10 @@ els.downloadRiskButton.addEventListener("click", () => {
 els.downloadZeroButton.addEventListener("click", () => {
   renderDashboard();
   downloadCsv(`0재고_${todayStamp()}.csv`, state.mergedRows.filter((row) => row["재고구분"] === "0재고"));
+});
+els.downloadNoLocationButton.addEventListener("click", () => {
+  renderDashboard();
+  downloadCsv(`위치없음_${todayStamp()}.csv`, state.mergedRows.filter((row) => !row["위치코드"]));
 });
 els.riskThreshold.addEventListener("input", renderDashboard);
 els.riskThreshold.addEventListener("change", renderDashboard);
